@@ -80,6 +80,7 @@ def _build_tf_model(cfg: TFModelConfig) -> tf.keras.Model:
     pos_ids = tf.keras.layers.Lambda(
         lambda t: tf.tile(tf.range(max_len, dtype=tf.int32)[tf.newaxis, :], [tf.shape(t)[0], 1]),
         name="position_ids",
+        output_shape=(max_len,),
     )(input_ids)
     pos_emb = tf.keras.layers.Embedding(max_len, cfg.d_model, name="position_embedding")(pos_ids)
 
@@ -89,6 +90,7 @@ def _build_tf_model(cfg: TFModelConfig) -> tf.keras.Model:
     attn_mask = tf.keras.layers.Lambda(
         lambda m: tf.cast(m[:, tf.newaxis, :], tf.bool),
         name="attention_mask_expanded",
+        output_shape=(1, max_len),
     )(attention_mask)
 
     for i in range(cfg.n_layers):
@@ -115,23 +117,38 @@ def _build_tf_model(cfg: TFModelConfig) -> tf.keras.Model:
         mask_f = tf.keras.layers.Lambda(
             lambda m: tf.cast(tf.expand_dims(m, axis=-1), tf.float32),
             name="mask_float",
+            output_shape=(max_len, 1),
         )(attention_mask)
         masked_sum = tf.keras.layers.Lambda(
             lambda t: tf.reduce_sum(t[0] * t[1], axis=1),
             name="masked_sum",
+            output_shape=(cfg.d_model,),
         )([x, mask_f])
         denom = tf.keras.layers.Lambda(
             lambda m: tf.maximum(1.0, tf.reduce_sum(m, axis=1)),
             name="mask_denom",
+            output_shape=(1,),
         )(mask_f)
-        pooled = tf.keras.layers.Lambda(lambda t: t[0] / t[1], name="mean_pool")([masked_sum, denom])
+        pooled = tf.keras.layers.Lambda(
+            lambda t: t[0] / t[1],
+            name="mean_pool",
+            output_shape=(cfg.d_model,),
+        )([masked_sum, denom])
     else:
-        pooled = tf.keras.layers.Lambda(lambda t: t[:, 0, :], name="cls_pool")(x)
+        pooled = tf.keras.layers.Lambda(
+            lambda t: t[:, 0, :],
+            name="cls_pool",
+            output_shape=(cfg.d_model,),
+        )(x)
 
     hidden = tf.keras.layers.Dense(cfg.cls_hidden_dim, activation="relu", name="cls_hidden")(pooled)
     hidden = tf.keras.layers.Dropout(cfg.dropout, name="cls_drop")(hidden)
     logits = tf.keras.layers.Dense(1, name="logits")(hidden)
-    logits = tf.keras.layers.Lambda(lambda t: tf.squeeze(t, axis=-1), name="squeeze")(logits)
+    logits = tf.keras.layers.Lambda(
+        lambda t: tf.squeeze(t, axis=-1),
+        name="squeeze",
+        output_shape=(),
+    )(logits)
 
     return tf.keras.Model(inputs=[input_ids, attention_mask], outputs=logits, name="cida_tf_transformer")
 
