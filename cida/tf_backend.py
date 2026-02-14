@@ -71,16 +71,17 @@ else:
 
 
 def _build_tf_model(cfg: TFModelConfig) -> tf.keras.Model:
-    input_ids = tf.keras.Input(shape=(cfg.max_len,), dtype=tf.int32, name="input_ids")
-    attention_mask = tf.keras.Input(shape=(cfg.max_len,), dtype=tf.int32, name="attention_mask")
+    max_len = int(cfg.max_len)
+    input_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_ids")
+    attention_mask = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="attention_mask")
 
     tok_emb = tf.keras.layers.Embedding(cfg.vocab_size, cfg.d_model, name="token_embedding")(input_ids)
 
     pos_ids = tf.keras.layers.Lambda(
-        lambda t: tf.tile(tf.range(cfg.max_len, dtype=tf.int32)[tf.newaxis, :], [tf.shape(t)[0], 1]),
+        lambda t: tf.tile(tf.range(max_len, dtype=tf.int32)[tf.newaxis, :], [tf.shape(t)[0], 1]),
         name="position_ids",
     )(input_ids)
-    pos_emb = tf.keras.layers.Embedding(cfg.max_len, cfg.d_model, name="position_embedding")(pos_ids)
+    pos_emb = tf.keras.layers.Embedding(max_len, cfg.d_model, name="position_embedding")(pos_ids)
 
     x = tf.keras.layers.Add(name="input_add")([tok_emb, pos_emb])
     x = tf.keras.layers.Dropout(cfg.dropout, name="input_dropout")(x)
