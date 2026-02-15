@@ -38,9 +38,11 @@ class Settings(BaseSettings):
     )
     cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
-    model_version: str = Field(default="deberta-v3-base-v1", alias="MODEL_VERSION")
-    detector_model_name: str = Field(default="microsoft/deberta-v3-base", alias="DETECTOR_MODEL_NAME")
+    model_version: str = Field(default="deberta-v3-large-v2", alias="MODEL_VERSION")
+    detector_model_name: str = Field(default="microsoft/deberta-v3-large", alias="DETECTOR_MODEL_NAME")
     detector_onnx_path: str = Field(default="../trainer/artifacts/latest/model.onnx", alias="DETECTOR_ONNX_PATH")
+    detector_tokenizer_path: str = Field(default="", alias="DETECTOR_TOKENIZER_PATH")
+    detector_allow_remote_download: bool = Field(default=False, alias="DETECTOR_ALLOW_REMOTE_DOWNLOAD")
     calibration_path: str = Field(default="../trainer/artifacts/latest/calibration.json", alias="CALIBRATION_PATH")
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")

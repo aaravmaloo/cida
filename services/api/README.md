@@ -14,6 +14,15 @@
 4. Start server:
    - `uvicorn app.main:app --reload --port 8000`
 
+## Detector artifacts
+
+Detector quality depends on runtime artifacts being available:
+
+- `DETECTOR_ONNX_PATH`
+- `CALIBRATION_PATH`
+- Optional explicit tokenizer dir: `DETECTOR_TOKENIZER_PATH`
+- Optional tokenizer download fallback: `DETECTOR_ALLOW_REMOTE_DOWNLOAD=true`
+
 ## Core endpoints
 
 - `POST /v1/analyze`

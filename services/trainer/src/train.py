@@ -6,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from datasets import Dataset
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, brier_score_loss, f1_score, precision_score, recall_score, roc_auc_score
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -20,10 +21,59 @@ from src.constants import ARTIFACT_ROOT
 from src.data_pipeline import load_and_split, normalize_text
 
 
-class WeightedBCETrainer(Trainer):
-    def __init__(self, pos_weight: float, *args, **kwargs):
+def sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1 / (1 + np.exp(-x))
+
+
+def safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> float:
+    # roc_auc_score fails when a split has one class.
+    if len(np.unique(labels)) < 2:
+        return 0.5
+    return float(roc_auc_score(labels, probs))
+
+
+def compute_metrics_from_logits(logits: np.ndarray, labels: np.ndarray, threshold: float = 0.5) -> dict:
+    logits = logits.reshape(-1).astype(np.float64)
+    labels = labels.reshape(-1).astype(np.int64)
+    probs = sigmoid(logits)
+    preds = (probs >= threshold).astype(np.int64)
+
+    return {
+        "threshold": float(threshold),
+        "accuracy": float(accuracy_score(labels, preds)),
+        "f1": float(f1_score(labels, preds, zero_division=0)),
+        "precision": float(precision_score(labels, preds, zero_division=0)),
+        "recall": float(recall_score(labels, preds, zero_division=0)),
+        "roc_auc": safe_roc_auc(labels, probs),
+        "brier": float(brier_score_loss(labels, probs)),
+    }
+
+
+def find_optimal_threshold(probs: np.ndarray, labels: np.ndarray) -> dict:
+    labels = labels.reshape(-1).astype(np.int64)
+    probs = probs.reshape(-1).astype(np.float64)
+
+    best = {"threshold": 0.5, "f1": -1.0, "accuracy": -1.0, "precision": 0.0, "recall": 0.0}
+    for t in np.linspace(0.05, 0.95, 181):
+        preds = (probs >= t).astype(np.int64)
+        f1 = float(f1_score(labels, preds, zero_division=0))
+        acc = float(accuracy_score(labels, preds))
+        if f1 > best["f1"] or (abs(f1 - best["f1"]) <= 1e-9 and acc > best["accuracy"]):
+            best = {
+                "threshold": float(t),
+                "f1": f1,
+                "accuracy": acc,
+                "precision": float(precision_score(labels, preds, zero_division=0)),
+                "recall": float(recall_score(labels, preds, zero_division=0)),
+            }
+    return best
+
+
+class WeightedFocalBCETrainer(Trainer):
+    def __init__(self, pos_weight: float, focal_gamma: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_weight = torch.tensor([pos_weight], dtype=torch.float32)
+        self.focal_gamma = float(max(0.0, focal_gamma))
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs.pop("labels")
@@ -31,41 +81,50 @@ class WeightedBCETrainer(Trainer):
         logits = outputs.logits.view(-1)
         labels = labels.float()
 
-        weight = self.pos_weight.to(logits.device)
-        loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=weight)
-        loss = loss_fn(logits, labels)
+        pos_weight = self.pos_weight.to(logits.device)
+        bce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none", pos_weight=pos_weight)
+        if self.focal_gamma > 0:
+            probs = torch.sigmoid(logits)
+            pt = torch.where(labels > 0.5, probs, 1.0 - probs)
+            focal = (1.0 - pt).pow(self.focal_gamma)
+            loss = (focal * bce).mean()
+        else:
+            loss = bce.mean()
+
         return (loss, outputs) if return_outputs else loss
 
 
-def head_tail_tokenize(tokenizer, text: str, max_len: int = 512):
-    tokens = tokenizer.encode(text, add_special_tokens=False)
-    if len(tokens) <= max_len - 2:
-        chunk = tokens
+def head_tail_tokenize(tokenizer, text: str, max_len: int = 512) -> dict:
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    if len(token_ids) <= max_len - 2:
+        chunk = token_ids
     else:
         head = (max_len - 2) // 2
         tail = max_len - 2 - head
-        chunk = tokens[:head] + tokens[-tail:]
+        chunk = token_ids[:head] + token_ids[-tail:]
+
     input_ids = [tokenizer.cls_token_id] + chunk + [tokenizer.sep_token_id]
     attention_mask = [1] * len(input_ids)
 
-    pad_len = max_len - len(input_ids)
-    if pad_len > 0:
-        input_ids += [tokenizer.pad_token_id] * pad_len
-        attention_mask += [0] * pad_len
+    pad = max_len - len(input_ids)
+    if pad > 0:
+        input_ids += [tokenizer.pad_token_id] * pad
+        attention_mask += [0] * pad
 
     return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    logits = logits.reshape(-1)
-    probs = 1 / (1 + np.exp(-logits))
-    preds = (probs >= 0.5).astype(int)
-    return {
-        "accuracy": accuracy_score(labels, preds),
-        "f1": f1_score(labels, preds),
-        "roc_auc": roc_auc_score(labels, probs),
-    }
+def to_dataset(frame, tokenizer, text_col: str, label_col: str, max_len: int) -> Dataset:
+    texts = frame[text_col].apply(normalize_text).tolist()
+    labels = frame[label_col].astype(int).tolist()
+    encoded = [head_tail_tokenize(tokenizer, text, max_len=max_len) for text in texts]
+    return Dataset.from_dict(
+        {
+            "input_ids": [item["input_ids"] for item in encoded],
+            "attention_mask": [item["attention_mask"] for item in encoded],
+            "labels": labels,
+        }
+    )
 
 
 def run(args: argparse.Namespace) -> None:
@@ -75,27 +134,17 @@ def run(args: argparse.Namespace) -> None:
     split = load_and_split(args.csv, text_col=args.text_col, label_col=args.label_col, seed=args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
-    def to_dataset(frame):
-        text = frame[args.text_col].apply(normalize_text).tolist()
-        labels = frame[args.label_col].tolist()
-        encoded = [head_tail_tokenize(tokenizer, t, max_len=args.max_len) for t in text]
-        return Dataset.from_dict(
-            {
-                "input_ids": [x["input_ids"] for x in encoded],
-                "attention_mask": [x["attention_mask"] for x in encoded],
-                "labels": labels,
-            }
-        )
-
-    train_ds = to_dataset(split.train)
-    val_ds = to_dataset(split.val)
-    test_ds = to_dataset(split.test)
+    train_ds = to_dataset(split.train, tokenizer, args.text_col, args.label_col, args.max_len)
+    val_ds = to_dataset(split.val, tokenizer, args.text_col, args.label_col, args.max_len)
+    test_ds = to_dataset(split.test, tokenizer, args.text_col, args.label_col, args.max_len)
 
     pos = int(split.train[args.label_col].sum())
     neg = int(len(split.train) - pos)
-    pos_weight = neg / max(1, pos)
+    pos_weight = float(neg / max(1, pos))
 
     model = AutoModelForSequenceClassification.from_pretrained(args.model_name, num_labels=1)
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     train_args = TrainingArguments(
         output_dir=str(artifact_dir / "checkpoints"),
@@ -103,12 +152,14 @@ def run(args: argparse.Namespace) -> None:
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size * 2,
+        per_device_eval_batch_size=args.eval_batch_size,
         gradient_accumulation_steps=args.grad_accum,
         warmup_ratio=args.warmup_ratio,
+        lr_scheduler_type=args.lr_scheduler,
         eval_strategy="epoch",
         save_strategy="epoch",
-        metric_for_best_model="roc_auc",
+        save_total_limit=2,
+        metric_for_best_model="eval_roc_auc",
         greater_is_better=True,
         load_best_model_at_end=True,
         logging_steps=20,
@@ -117,14 +168,19 @@ def run(args: argparse.Namespace) -> None:
         seed=args.seed,
     )
 
-    trainer = WeightedBCETrainer(
+    def trainer_metrics(eval_pred):
+        logits, labels = eval_pred
+        return compute_metrics_from_logits(logits, labels, threshold=0.5)
+
+    trainer = WeightedFocalBCETrainer(
         pos_weight=pos_weight,
+        focal_gamma=args.focal_gamma,
         model=model,
         args=train_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+        compute_metrics=trainer_metrics,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience)],
     )
 
     trainer.train()
@@ -132,28 +188,55 @@ def run(args: argparse.Namespace) -> None:
     val_pred = trainer.predict(val_ds)
     test_pred = trainer.predict(test_ds)
 
+    val_logits = val_pred.predictions.reshape(-1).astype(np.float64)
+    val_labels = val_pred.label_ids.reshape(-1).astype(np.int64)
+    test_logits = test_pred.predictions.reshape(-1).astype(np.float64)
+    test_labels = test_pred.label_ids.reshape(-1).astype(np.int64)
+
+    threshold_info = find_optimal_threshold(sigmoid(val_logits), val_labels)
+    threshold = float(threshold_info["threshold"])
+
     final_metrics = {
-        "val": compute_metrics((val_pred.predictions, val_pred.label_ids)),
-        "test": compute_metrics((test_pred.predictions, test_pred.label_ids)),
         "model_name": args.model_name,
         "max_len": args.max_len,
+        "split_sizes": {"train": len(split.train), "val": len(split.val), "test": len(split.test)},
+        "train_class_balance": {"human_0": int(neg), "ai_1": int(pos)},
+        "loss": {"pos_weight": pos_weight, "focal_gamma": float(args.focal_gamma)},
+        "val@0.5": compute_metrics_from_logits(val_logits, val_labels, threshold=0.5),
+        "val@best": compute_metrics_from_logits(val_logits, val_labels, threshold=threshold),
+        "test@0.5": compute_metrics_from_logits(test_logits, test_labels, threshold=0.5),
+        "test@best": compute_metrics_from_logits(test_logits, test_labels, threshold=threshold),
+        "best_threshold_from_val": threshold_info,
     }
 
     model_path = artifact_dir / "model"
     trainer.model.save_pretrained(model_path)
     tokenizer.save_pretrained(model_path)
 
-    np.savez(
-        artifact_dir / "val_logits.npz",
-        logits=val_pred.predictions.reshape(-1),
-        labels=val_pred.label_ids,
-    )
-    np.savez(
-        artifact_dir / "test_logits.npz",
-        logits=test_pred.predictions.reshape(-1),
-        labels=test_pred.label_ids,
-    )
+    np.savez(artifact_dir / "val_logits.npz", logits=val_logits, labels=val_labels)
+    np.savez(artifact_dir / "test_logits.npz", logits=test_logits, labels=test_labels)
 
+    training_config = {
+        "csv": args.csv,
+        "text_col": args.text_col,
+        "label_col": args.label_col,
+        "model_name": args.model_name,
+        "max_len": args.max_len,
+        "batch_size": args.batch_size,
+        "eval_batch_size": args.eval_batch_size,
+        "grad_accum": args.grad_accum,
+        "epochs": args.epochs,
+        "learning_rate": args.learning_rate,
+        "weight_decay": args.weight_decay,
+        "warmup_ratio": args.warmup_ratio,
+        "lr_scheduler": args.lr_scheduler,
+        "focal_gamma": args.focal_gamma,
+        "gradient_checkpointing": bool(args.gradient_checkpointing),
+        "seed": args.seed,
+    }
+
+    (artifact_dir / "thresholds.json").write_text(json.dumps({"optimal_threshold": threshold, **threshold_info}, indent=2), encoding="utf-8")
+    (artifact_dir / "training_config.json").write_text(json.dumps(training_config, indent=2), encoding="utf-8")
     (artifact_dir / "metrics.json").write_text(json.dumps(final_metrics, indent=2), encoding="utf-8")
 
 
@@ -163,14 +246,18 @@ if __name__ == "__main__":
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="generated")
     parser.add_argument("--output-dir", default=str(ARTIFACT_ROOT))
-    parser.add_argument("--model-name", default="microsoft/deberta-v3-base")
+    parser.add_argument("--model-name", default="microsoft/deberta-v3-large")
     parser.add_argument("--max-len", type=int, default=512)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--grad-accum", type=int, default=4)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--learning-rate", type=float, default=2e-5)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--eval-batch-size", type=int, default=8)
+    parser.add_argument("--grad-accum", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=4)
+    parser.add_argument("--learning-rate", type=float, default=1.5e-5)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--warmup-ratio", type=float, default=0.08)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--lr-scheduler", default="cosine")
+    parser.add_argument("--focal-gamma", type=float, default=1.5)
+    parser.add_argument("--early-stopping-patience", type=int, default=2)
+    parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     run(parser.parse_args())
-
