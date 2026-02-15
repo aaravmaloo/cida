@@ -30,6 +30,9 @@ def main() -> None:
     parser.add_argument("--min-params", type=int, default=100_000_000)
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--tpu-bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gpu-bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gpu-fp16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gpu-tf32", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--quantize", action="store_true")
     args = parser.parse_args()
 
@@ -63,6 +66,9 @@ def main() -> None:
         str(args.epochs),
     ]
     train_cmd.append("--tpu-bf16" if args.tpu_bf16 else "--no-tpu-bf16")
+    train_cmd.append("--gpu-bf16" if args.gpu_bf16 else "--no-gpu-bf16")
+    train_cmd.append("--gpu-fp16" if args.gpu_fp16 else "--no-gpu-fp16")
+    train_cmd.append("--gpu-tf32" if args.gpu_tf32 else "--no-gpu-tf32")
     if args.from_scratch:
         train_cmd.append("--from-scratch")
     if args.unlabeled_default_label is not None:
