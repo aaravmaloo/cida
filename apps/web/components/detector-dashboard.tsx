@@ -21,31 +21,12 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>;
 
-const FALLBACK_RESULT: AnalyzeResponse = {
-  analysis_id: "-",
-  ai_probability: 0.75,
-  human_score: 0.25,
-  confidence_band: "high",
-  readability: {
-    flesch_reading_ease: 56,
-    flesch_kincaid_grade: 12.1,
-    smog_index: 12.6,
-  },
-  complexity: 0.88,
-  burstiness: 0.15,
-  vocab_diversity: 0.42,
-  word_count: 0,
-  estimated_read_time: 0,
-  model_version: "deberta-v3-base-v1",
-  latency_ms: 0,
-};
-
 function percent(v: number): string {
   return `${Math.round(v * 100)}%`;
 }
 
 export function DetectorDashboard() {
-  const [result, setResult] = useState<AnalyzeResponse>(FALLBACK_RESULT);
+  const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string>("");
   const [reportStatus, setReportStatus] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,6 +50,7 @@ export function DetectorDashboard() {
     onSuccess: (data) => {
       setError("");
       setResult(data);
+      setReportStatus("");
     },
     onError: (err: Error) => {
       setError(err.message);
@@ -88,7 +70,7 @@ export function DetectorDashboard() {
   };
 
   const handleDownloadReport = async () => {
-    if (!result.analysis_id || result.analysis_id === "-") return;
+    if (!result?.analysis_id) return;
     setReportStatus("Queueing report...");
 
     const create = await createReport(result.analysis_id);
@@ -113,9 +95,16 @@ export function DetectorDashboard() {
     setReportStatus("Report timeout. Try again.");
   };
 
+  const aiProbability = result?.ai_probability ?? 0;
+  const humanScore = result?.human_score ?? 0;
   const pieData = [
-    { name: "AI", value: Math.round(result.ai_probability * 100) },
-    { name: "Human", value: 100 - Math.round(result.ai_probability * 100) },
+    { name: "AI", value: Math.round(aiProbability * 100) },
+    { name: "Human", value: 100 - Math.round(aiProbability * 100) },
+  ];
+  const breakdownItems = [
+    { label: "Sentence Complexity", value: result?.complexity ?? null },
+    { label: "Vocabulary Variety", value: result?.vocab_diversity ?? null },
+    { label: "Burstiness Index", value: result?.burstiness ?? null },
   ];
 
   return (
@@ -190,23 +179,25 @@ export function DetectorDashboard() {
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <p className="-mt-28 text-center text-5xl font-bold">{percent(result.ai_probability)}</p>
+            <p className="-mt-28 text-center text-5xl font-bold">{result ? percent(aiProbability) : "--"}</p>
             <p className="mt-20 text-center text-sm font-semibold text-cida-accent">
-              {result.ai_probability >= 0.7 ? "Highly Likely AI" : result.ai_probability >= 0.45 ? "Mixed Signal" : "Likely Human"}
+              {result ? (aiProbability >= 0.7 ? "Highly Likely AI" : aiProbability >= 0.45 ? "Mixed Signal" : "Likely Human") : "Awaiting Analysis"}
             </p>
             <p className="mt-4 text-center text-sm text-cida-mute">
-              Score combines calibrated transformer probability and linguistic pattern analysis.
+              {result
+                ? "Score combines calibrated transformer probability and linguistic pattern analysis."
+                : "Run a scan to see probability, readability, and linguistic metrics."}
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-2xl border border-cida-line bg-white p-4">
               <p className="text-xs uppercase text-cida-mute">Human score</p>
-              <p className="mt-1 text-3xl font-bold">{percent(result.human_score)}</p>
+              <p className="mt-1 text-3xl font-bold">{result ? percent(humanScore) : "--"}</p>
             </div>
             <div className="rounded-2xl border border-cida-line bg-white p-4">
               <p className="text-xs uppercase text-cida-mute">Readability</p>
-              <p className="mt-1 text-3xl font-bold">G{Math.round(result.readability.flesch_kincaid_grade)}</p>
+              <p className="mt-1 text-3xl font-bold">{result ? `G${Math.round(result.readability.flesch_kincaid_grade)}` : "--"}</p>
             </div>
           </div>
 
@@ -214,18 +205,14 @@ export function DetectorDashboard() {
             <p className="mb-4 text-xs font-semibold uppercase text-cida-mute">Content breakdown</p>
 
             <div className="space-y-3">
-              {[
-                { label: "Sentence Complexity", value: result.complexity },
-                { label: "Vocabulary Variety", value: result.vocab_diversity },
-                { label: "Burstiness Index", value: result.burstiness },
-              ].map((item) => (
+              {breakdownItems.map((item) => (
                 <div key={item.label}>
                   <div className="mb-1 flex justify-between text-sm">
                     <span>{item.label}</span>
-                    <span className="font-semibold text-cida-accent">{percent(item.value)}</span>
+                    <span className="font-semibold text-cida-accent">{item.value === null ? "--" : percent(item.value)}</span>
                   </div>
                   <div className="h-2 rounded-full bg-[#e7ecf7]">
-                    <div className="h-2 rounded-full bg-cida-accent" style={{ width: percent(item.value) }} />
+                    <div className="h-2 rounded-full bg-cida-accent" style={{ width: item.value === null ? "0%" : percent(item.value) }} />
                   </div>
                 </div>
               ))}
@@ -233,8 +220,9 @@ export function DetectorDashboard() {
 
             <button
               type="button"
-              className="mt-6 w-full rounded-xl border border-cida-line bg-cida-panel px-4 py-3 font-semibold text-cida-accent hover:border-cida-accent"
+              className="mt-6 w-full rounded-xl border border-cida-line bg-cida-panel px-4 py-3 font-semibold text-cida-accent hover:border-cida-accent disabled:cursor-not-allowed disabled:opacity-60"
               onClick={handleDownloadReport}
+              disabled={!result}
             >
               Download Full Report
             </button>
