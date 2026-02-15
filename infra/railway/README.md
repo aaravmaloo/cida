@@ -21,7 +21,8 @@ Deploy `services/api` and `services/worker` as separate Railway services.
 - `REDIS_URL`
 - `JWT_SECRET`
 - `ADMIN_PASSKEY_HASH`
-- `CORS_ALLOWED_ORIGINS`
+- `CORS_ALLOWED_ORIGINS` (for Vercel: `https://cida-web.vercel.app`, no trailing slash)
+- Optional: `CORS_ALLOW_ORIGIN_REGEX` (e.g. `^https://cida-web\\.vercel\\.app$`)
 - `NEXT_PUBLIC_API_BASE_URL` (in Vercel)
 - Optional R2: `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`
 
