@@ -1,7 +1,17 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _normalize_async_database_url(url: str) -> str:
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgres://"):
+        return f"postgresql+asyncpg://{url[len('postgres://'):]}"
+    if url.startswith("postgresql://"):
+        return f"postgresql+asyncpg://{url[len('postgresql://'):]}"
+    return url
 
 
 class Settings(BaseSettings):
@@ -41,6 +51,11 @@ class Settings(BaseSettings):
     sentry_dsn: str = Field(default="", alias="SENTRY_DSN")
     turnstile_secret: str = Field(default="", alias="TURNSTILE_SECRET")
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        return _normalize_async_database_url(value)
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
@@ -50,4 +65,3 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     return Settings()
-
