@@ -174,11 +174,19 @@ def detect_accelerator() -> dict:
         "xla_hardware": None,
         "xla_world_size": 0,
         "cuda_devices": 0,
+        "cuda_name": None,
+        "cuda_bf16_supported": False,
     }
 
     if torch.cuda.is_available():
         info["accelerator"] = "cuda"
         info["cuda_devices"] = int(torch.cuda.device_count())
+        props = torch.cuda.get_device_properties(0)
+        info["cuda_name"] = props.name
+        bf16_supported = False
+        if hasattr(torch.cuda, "is_bf16_supported"):
+            bf16_supported = bool(torch.cuda.is_bf16_supported())
+        info["cuda_bf16_supported"] = bf16_supported
         return info
 
     if importlib.util.find_spec("torch_xla") is None:
@@ -199,6 +207,33 @@ def detect_accelerator() -> dict:
         return info
 
     return info
+
+
+def resolve_precision(args: argparse.Namespace, accelerator_info: dict) -> dict:
+    accelerator = str(accelerator_info.get("accelerator", "cpu"))
+    use_cuda = accelerator == "cuda"
+    use_tpu = accelerator == "tpu"
+    cuda_bf16_supported = bool(accelerator_info.get("cuda_bf16_supported", False))
+
+    use_tpu_bf16 = bool(use_tpu and args.tpu_bf16)
+    use_gpu_bf16 = bool(use_cuda and args.gpu_bf16 and cuda_bf16_supported)
+    use_gpu_fp16 = bool(use_cuda and args.gpu_fp16 and not use_gpu_bf16)
+    use_gpu_tf32 = bool(use_cuda and args.gpu_tf32)
+
+    if use_cuda:
+        torch.backends.cuda.matmul.allow_tf32 = use_gpu_tf32
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.allow_tf32 = use_gpu_tf32
+
+    return {
+        "fp16": use_gpu_fp16,
+        "bf16": use_tpu_bf16 or use_gpu_bf16,
+        "tf32": use_gpu_tf32,
+        "tpu_bf16": use_tpu_bf16,
+        "gpu_bf16": use_gpu_bf16,
+        "gpu_fp16": use_gpu_fp16,
+        "cuda_bf16_supported": cuda_bf16_supported,
+    }
 
 
 def run(args: argparse.Namespace) -> None:
@@ -236,6 +271,7 @@ def run(args: argparse.Namespace) -> None:
     use_cuda = accelerator == "cuda"
     use_tpu = accelerator == "tpu"
     tpu_cores = int(accelerator_info.get("xla_world_size", 0)) if use_tpu else None
+    precision = resolve_precision(args, accelerator_info)
 
     train_args = TrainingArguments(
         output_dir=str(artifact_dir / "checkpoints"),
@@ -255,8 +291,8 @@ def run(args: argparse.Namespace) -> None:
         load_best_model_at_end=True,
         logging_steps=20,
         report_to=[],
-        fp16=use_cuda,
-        bf16=bool(use_tpu and args.tpu_bf16),
+        fp16=bool(precision["fp16"]),
+        bf16=bool(precision["bf16"]),
         dataloader_pin_memory=use_cuda,
         tpu_num_cores=tpu_cores,
         seed=args.seed,
@@ -295,6 +331,7 @@ def run(args: argparse.Namespace) -> None:
         "model_spec": model_spec,
         "parameter_count": param_count,
         "accelerator": accelerator_info,
+        "precision": precision,
         "data_files": data_files,
         "text_col": split.text_col,
         "label_col": split.label_col,
@@ -329,7 +366,11 @@ def run(args: argparse.Namespace) -> None:
         "min_params": args.min_params,
         "from_scratch": bool(args.from_scratch),
         "accelerator": accelerator_info,
+        "precision": precision,
         "tpu_bf16": bool(args.tpu_bf16),
+        "gpu_bf16": bool(args.gpu_bf16),
+        "gpu_fp16": bool(args.gpu_fp16),
+        "gpu_tf32": bool(args.gpu_tf32),
         "layers": args.layers,
         "hidden_size": args.hidden_size,
         "attention_heads": args.attention_heads,
@@ -371,6 +412,9 @@ if __name__ == "__main__":
     parser.add_argument("--max-position-embeddings", type=int, default=514)
     parser.add_argument("--min-params", type=int, default=100_000_000)
     parser.add_argument("--tpu-bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gpu-bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gpu-fp16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gpu-tf32", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-len", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--eval-batch-size", type=int, default=8)
