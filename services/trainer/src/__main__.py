@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="auto")
     parser.add_argument("--unlabeled-default-label", type=int, choices=[0, 1], default=None)
+    parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--output-dir", default="../artifacts/latest")
     parser.add_argument("--model-name", default="microsoft/deberta-v3-large")
     parser.add_argument("--from-scratch", action="store_true")
@@ -65,6 +66,8 @@ def main() -> None:
         "--epochs",
         str(args.epochs),
     ]
+    if args.limit is not None:
+        train_cmd.extend(["--limit", str(args.limit)])
     train_cmd.append("--tpu-bf16" if args.tpu_bf16 else "--no-tpu-bf16")
     train_cmd.append("--gpu-bf16" if args.gpu_bf16 else "--no-gpu-bf16")
     train_cmd.append("--gpu-fp16" if args.gpu_fp16 else "--no-gpu-fp16")
