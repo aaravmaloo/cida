@@ -28,6 +28,8 @@ class WorkerSettings(BaseSettings):
 
     @field_validator("database_url", mode="before")
     @classmethod
-    def normalize_database_url(cls, value: str) -> str:
-        return _normalize_async_database_url(value)
+    def normalize_database_url(cls, value: object) -> object:
+        if isinstance(value, str):
+            return _normalize_async_database_url(value)
+        return value
 
