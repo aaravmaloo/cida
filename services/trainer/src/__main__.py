@@ -14,28 +14,65 @@ def run_step(command: list[str], cwd: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="End-to-end detector training pipeline")
+    parser.add_argument("--data-path", dest="data_paths", action="append", help="Training file path (.csv/.parquet). Repeat to include multiple files.")
     parser.add_argument("--csv", default="../../train_data/balanced_ai_human_prompts.csv")
+    parser.add_argument("--text-col", default="text")
+    parser.add_argument("--label-col", default="auto")
+    parser.add_argument("--unlabeled-default-label", type=int, choices=[0, 1], default=None)
     parser.add_argument("--output-dir", default="../artifacts/latest")
     parser.add_argument("--model-name", default="microsoft/deberta-v3-large")
+    parser.add_argument("--from-scratch", action="store_true")
+    parser.add_argument("--layers", type=int, default=8)
+    parser.add_argument("--hidden-size", type=int, default=1024)
+    parser.add_argument("--attention-heads", type=int, default=16)
+    parser.add_argument("--ffn-size", type=int, default=4096)
+    parser.add_argument("--max-position-embeddings", type=int, default=514)
+    parser.add_argument("--min-params", type=int, default=100_000_000)
+    parser.add_argument("--epochs", type=int, default=4)
+    parser.add_argument("--tpu-bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--quantize", action="store_true")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
 
-    run_step(
-        [
-            sys.executable,
-            "-m",
-            "src.train",
-            "--csv",
-            args.csv,
-            "--output-dir",
-            args.output_dir,
-            "--model-name",
-            args.model_name,
-        ],
-        root,
-    )
+    train_cmd = [
+        sys.executable,
+        "-m",
+        "src.train",
+        "--output-dir",
+        args.output_dir,
+        "--model-name",
+        args.model_name,
+        "--text-col",
+        args.text_col,
+        "--label-col",
+        args.label_col,
+        "--layers",
+        str(args.layers),
+        "--hidden-size",
+        str(args.hidden_size),
+        "--attention-heads",
+        str(args.attention_heads),
+        "--ffn-size",
+        str(args.ffn_size),
+        "--max-position-embeddings",
+        str(args.max_position_embeddings),
+        "--min-params",
+        str(args.min_params),
+        "--epochs",
+        str(args.epochs),
+    ]
+    train_cmd.append("--tpu-bf16" if args.tpu_bf16 else "--no-tpu-bf16")
+    if args.from_scratch:
+        train_cmd.append("--from-scratch")
+    if args.unlabeled_default_label is not None:
+        train_cmd.extend(["--unlabeled-default-label", str(args.unlabeled_default_label)])
+    if args.data_paths:
+        for data_path in args.data_paths:
+            train_cmd.extend(["--data-path", data_path])
+    else:
+        train_cmd.extend(["--csv", args.csv])
+    run_step(train_cmd, root)
     run_step(
         [
             sys.executable,
