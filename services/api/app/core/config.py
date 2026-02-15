@@ -36,6 +36,7 @@ class Settings(BaseSettings):
         default="http://localhost:3000,https://cida-web.vercel.app",
         alias="CORS_ALLOWED_ORIGINS",
     )
+    cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
     model_version: str = Field(default="deberta-v3-base-v1", alias="MODEL_VERSION")
     detector_model_name: str = Field(default="microsoft/deberta-v3-base", alias="DETECTOR_MODEL_NAME")
@@ -101,6 +102,11 @@ class Settings(BaseSettings):
 
         normalized = [self._normalize_origin(value) for value in values]
         return [origin for origin in normalized if origin]
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        value = self.cors_allow_origin_regex.strip()
+        return value or None
 
 
 @lru_cache
