@@ -240,6 +240,14 @@ def resolve_precision(args: argparse.Namespace, accelerator_info: dict) -> dict:
 def run(args: argparse.Namespace) -> None:
     artifact_dir = Path(args.output_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    resume_checkpoint: str | None = None
+    if args.resume_from_checkpoint:
+        resume_path = Path(args.resume_from_checkpoint)
+        if not resume_path.exists():
+            raise ValueError(f"Checkpoint path does not exist: {resume_path}")
+        if not resume_path.is_dir():
+            raise ValueError(f"Checkpoint path must be a directory: {resume_path}")
+        resume_checkpoint = str(resume_path)
 
     if args.data_paths:
         data_files = args.data_paths
@@ -324,7 +332,7 @@ def run(args: argparse.Namespace) -> None:
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience)],
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
 
     val_pred = trainer.predict(val_ds)
     test_pred = trainer.predict(test_ds)
@@ -368,6 +376,7 @@ def run(args: argparse.Namespace) -> None:
         "data_files": data_files,
         "limit": args.limit,
         "csv": args.csv if not args.data_paths else None,
+        "resume_from_checkpoint": resume_checkpoint,
         "text_col": split.text_col,
         "label_col": split.label_col,
         "requested_label_col": args.label_col,
@@ -440,5 +449,10 @@ if __name__ == "__main__":
     parser.add_argument("--focal-gamma", type=float, default=1.5)
     parser.add_argument("--early-stopping-patience", type=int, default=2)
     parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        default=None,
+        help="Path to a Hugging Face Trainer checkpoint directory (for example, .../checkpoints/checkpoint-123).",
+    )
     parser.add_argument("--seed", type=int, default=42)
     run(parser.parse_args())
