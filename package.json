@@ -1,0 +1,16 @@
+{
+  "name": "cida-v2",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "packages/shared-schemas"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @cida/web",
+    "build:web": "npm run build --workspace @cida/web",
+    "lint:web": "npm run lint --workspace @cida/web",
+    "test:web": "npm run test --workspace @cida/web"
+  }
+}
+
