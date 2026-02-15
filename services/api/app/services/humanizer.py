@@ -17,11 +17,15 @@ class HumanizerService:
     def __init__(self, max_input_tokens: int = 1800) -> None:
         self.max_input_tokens = max_input_tokens
         self._pipeline = None
+        self._pipeline_unavailable = False
 
     def _get_pipeline(self):
         if self._pipeline is not None:
             return self._pipeline
+        if self._pipeline_unavailable:
+            return None
         if pipeline is None:
+            self._pipeline_unavailable = True
             return None
         try:
             self._pipeline = pipeline(
@@ -30,6 +34,7 @@ class HumanizerService:
                 tokenizer="google/flan-t5-base",
             )
         except Exception:
+            self._pipeline_unavailable = True
             self._pipeline = None
         return self._pipeline
 
