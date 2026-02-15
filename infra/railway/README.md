@@ -7,6 +7,7 @@ Deploy `services/api` and `services/worker` as separate Railway services.
 - Root directory: `.`
 - Dockerfile: `infra/docker/Dockerfile.api`
 - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Optional build arg for full ML humanizer backend: `INSTALL_TORCH_CPU=1` (default is `0` for smaller images)
 
 ## Worker service
 
