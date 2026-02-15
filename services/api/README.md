@@ -6,6 +6,8 @@
    - `python -m venv .venv`
    - `. .venv/Scripts/Activate.ps1`
    - `pip install -r requirements.txt`
+   - For tests only: `pip install -r requirements-dev.txt`
+   - Optional full humanizer model backend: `pip install -r requirements-torch-cpu.txt`
 2. Copy `.env.example` to `.env` and set secrets.
 3. Run migrations:
    - `alembic upgrade head`
