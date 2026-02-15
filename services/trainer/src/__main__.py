@@ -30,6 +30,11 @@ def main() -> None:
     parser.add_argument("--max-position-embeddings", type=int, default=514)
     parser.add_argument("--min-params", type=int, default=100_000_000)
     parser.add_argument("--epochs", type=int, default=4)
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        default=None,
+        help="Path to a Hugging Face Trainer checkpoint directory to resume training from.",
+    )
     parser.add_argument("--tpu-bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gpu-bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gpu-fp16", action=argparse.BooleanOptionalAction, default=True)
@@ -74,6 +79,8 @@ def main() -> None:
     train_cmd.append("--gpu-tf32" if args.gpu_tf32 else "--no-gpu-tf32")
     if args.from_scratch:
         train_cmd.append("--from-scratch")
+    if args.resume_from_checkpoint:
+        train_cmd.extend(["--resume-from-checkpoint", args.resume_from_checkpoint])
     if args.unlabeled_default_label is not None:
         train_cmd.extend(["--unlabeled-default-label", str(args.unlabeled_default_label)])
     if args.data_paths:
