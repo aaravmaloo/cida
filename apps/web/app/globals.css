@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #eff2f8;
+  --panel: #f7f9ff;
+  --card: #ffffff;
+  --line: #d9e1ef;
+  --text: #171f33;
+  --muted: #6d7690;
+  --accent: #1d5fff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(circle at 15% 10%, #f9fbff 0%, #eef2f8 60%, #e8edf7 100%);
+  color: var(--text);
+  font-family: var(--font-manrope), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
