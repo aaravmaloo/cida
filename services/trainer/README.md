@@ -50,6 +50,18 @@ Install `torch_xla` matching your TPU VM/PyTorch version before running this com
 python -m torch_xla.distributed.xla_run --num_cores 8 -m src.train --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --model-name bert-base-uncased --from-scratch --layers 8 --hidden-size 1024 --attention-heads 16 --ffn-size 4096 --max-position-embeddings 514 --min-params 100000000 --label-col auto --unlabeled-default-label 1 --epochs 8 --tpu-bf16
 ```
 
+GPU training (single GPU, auto-detected in code, 8 epochs):
+
+```bash
+python -m src.train --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --model-name bert-base-uncased --from-scratch --layers 8 --hidden-size 1024 --attention-heads 16 --ffn-size 4096 --max-position-embeddings 514 --min-params 100000000 --label-col auto --unlabeled-default-label 1 --epochs 8 --gpu-bf16 --gpu-fp16 --gpu-tf32
+```
+
+GPU training (multi-GPU, example with 4 GPUs, 8 epochs):
+
+```bash
+torchrun --nproc_per_node 4 -m src.train --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --model-name bert-base-uncased --from-scratch --layers 8 --hidden-size 1024 --attention-heads 16 --ffn-size 4096 --max-position-embeddings 514 --min-params 100000000 --label-col auto --unlabeled-default-label 1 --epochs 8 --gpu-bf16 --gpu-fp16 --gpu-tf32
+```
+
 Calibrate:
 
 ```bash
