@@ -26,6 +26,7 @@ class DetectorService:
         self.temperature = 1.0
         self.ece = 0.08
         self.tokenizer = None
+        self._tokenizer_load_attempted = False
         self.session = None
 
         calib_path = Path(self.settings.calibration_path)
@@ -34,12 +35,6 @@ class DetectorService:
             self.temperature = float(payload.get("temperature", 1.0))
             self.ece = float(payload.get("ece", 0.08))
 
-        if AutoTokenizer is not None:
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(self.settings.detector_model_name)
-            except Exception:
-                logger.warning("tokenizer_load_failed", model=self.settings.detector_model_name)
-
         onnx_path = Path(self.settings.detector_onnx_path)
         if ort is not None and onnx_path.exists():
             providers = ["CPUExecutionProvider"]
@@ -47,6 +42,25 @@ class DetectorService:
                 self.session = ort.InferenceSession(str(onnx_path), providers=providers)
             except Exception:
                 logger.warning("onnx_session_failed", path=str(onnx_path))
+
+    def _load_tokenizer_once(self):
+        if self.tokenizer is not None or self._tokenizer_load_attempted:
+            return self.tokenizer
+
+        self._tokenizer_load_attempted = True
+        if AutoTokenizer is None:
+            return None
+
+        try:
+            # Avoid startup/runtime hangs on platforms without model cache access.
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.settings.detector_model_name,
+                local_files_only=True,
+            )
+        except Exception:
+            logger.warning("tokenizer_load_failed", model=self.settings.detector_model_name)
+            self.tokenizer = None
+        return self.tokenizer
 
     @staticmethod
     def _sigmoid(x: float) -> float:
@@ -65,10 +79,11 @@ class DetectorService:
         return float(clamp(logit, -6.0, 6.0))
 
     def _model_logit(self, text: str) -> float:
-        if self.session is None or self.tokenizer is None:
+        tokenizer = self._load_tokenizer_once()
+        if self.session is None or tokenizer is None:
             return self._heuristic_logit(text)
 
-        encoded = self.tokenizer(
+        encoded = tokenizer(
             text,
             max_length=512,
             truncation=True,
