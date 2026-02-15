@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 
@@ -251,6 +252,7 @@ def run(args: argparse.Namespace) -> None:
         label_col=args.label_col,
         seed=args.seed,
         unlabeled_default_label=args.unlabeled_default_label,
+        limit=args.limit,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
@@ -273,30 +275,39 @@ def run(args: argparse.Namespace) -> None:
     tpu_cores = int(accelerator_info.get("xla_world_size", 0)) if use_tpu else None
     precision = resolve_precision(args, accelerator_info)
 
-    train_args = TrainingArguments(
-        output_dir=str(artifact_dir / "checkpoints"),
-        num_train_epochs=args.epochs,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.eval_batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        warmup_ratio=args.warmup_ratio,
-        lr_scheduler_type=args.lr_scheduler,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        metric_for_best_model="eval_roc_auc",
-        greater_is_better=True,
-        load_best_model_at_end=True,
-        logging_steps=20,
-        report_to=[],
-        fp16=bool(precision["fp16"]),
-        bf16=bool(precision["bf16"]),
-        dataloader_pin_memory=use_cuda,
-        tpu_num_cores=tpu_cores,
-        seed=args.seed,
-    )
+    ta_signature = inspect.signature(TrainingArguments.__init__).parameters
+    train_kwargs: dict[str, object] = {
+        "output_dir": str(artifact_dir / "checkpoints"),
+        "num_train_epochs": args.epochs,
+        "learning_rate": args.learning_rate,
+        "weight_decay": args.weight_decay,
+        "per_device_train_batch_size": args.batch_size,
+        "per_device_eval_batch_size": args.eval_batch_size,
+        "gradient_accumulation_steps": args.grad_accum,
+        "warmup_ratio": args.warmup_ratio,
+        "lr_scheduler_type": args.lr_scheduler,
+        "save_strategy": "epoch",
+        "save_total_limit": 2,
+        "metric_for_best_model": "eval_roc_auc",
+        "greater_is_better": True,
+        "load_best_model_at_end": True,
+        "logging_steps": 20,
+        "report_to": [],
+        "fp16": bool(precision["fp16"]),
+        "bf16": bool(precision["bf16"]),
+        "dataloader_pin_memory": use_cuda,
+        "seed": args.seed,
+    }
+    # transformers has used both names across versions.
+    if "eval_strategy" in ta_signature:
+        train_kwargs["eval_strategy"] = "epoch"
+    else:
+        train_kwargs["evaluation_strategy"] = "epoch"
+
+    if "tpu_num_cores" in ta_signature and tpu_cores is not None:
+        train_kwargs["tpu_num_cores"] = tpu_cores
+
+    train_args = TrainingArguments(**train_kwargs)
 
     def trainer_metrics(eval_pred):
         logits, labels = eval_pred
@@ -355,6 +366,7 @@ def run(args: argparse.Namespace) -> None:
 
     training_config = {
         "data_files": data_files,
+        "limit": args.limit,
         "csv": args.csv if not args.data_paths else None,
         "text_col": split.text_col,
         "label_col": split.label_col,
@@ -402,6 +414,7 @@ if __name__ == "__main__":
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="auto")
     parser.add_argument("--unlabeled-default-label", type=int, choices=[0, 1], default=None)
+    parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--output-dir", default=str(ARTIFACT_ROOT))
     parser.add_argument("--model-name", default="microsoft/deberta-v3-large")
     parser.add_argument("--from-scratch", action="store_true")
