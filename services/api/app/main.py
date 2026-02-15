@@ -10,6 +10,7 @@ from fastapi.responses import ORJSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 
+from app import models  # noqa: F401
 from app.api.v1.router import router as v1_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
@@ -74,9 +75,9 @@ async def unhandled_exception_handler(_: Request, exc: Exception):
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    if settings.environment == "development":
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    # Idempotent bootstrap for fresh deployments where migrations haven't run yet.
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     logger.info(
         "startup_complete",
