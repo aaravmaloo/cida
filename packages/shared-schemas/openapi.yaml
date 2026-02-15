@@ -1,0 +1,38 @@
+openapi: 3.1.0
+info:
+  title: CIDA API
+  version: 0.1.0
+servers:
+  - url: https://api.example.com
+paths:
+  /v1/analyze:
+    post:
+      summary: Analyze text or file
+      responses:
+        '200':
+          description: OK
+  /v1/humanize:
+    post:
+      summary: Humanize text for clarity
+      responses:
+        '200':
+          description: OK
+  /v1/reports:
+    post:
+      summary: Create report job
+      responses:
+        '200':
+          description: OK
+  /v1/reports/{report_id}:
+    get:
+      summary: Report status
+      parameters:
+        - in: path
+          name: report_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+
