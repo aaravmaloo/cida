@@ -1,4 +1,6 @@
 from functools import lru_cache
+import json
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,7 +32,10 @@ class Settings(BaseSettings):
     admin_user: str = Field(default="admin", alias="ADMIN_USER")
     admin_pass: str = Field(default="admin", alias="ADMIN_PASS")
 
-    cors_allowed_origins: str = Field(default="http://localhost:3000", alias="CORS_ALLOWED_ORIGINS")
+    cors_allowed_origins: str = Field(
+        default="http://localhost:3000,https://cida-web.vercel.app",
+        alias="CORS_ALLOWED_ORIGINS",
+    )
 
     model_version: str = Field(default="deberta-v3-base-v1", alias="MODEL_VERSION")
     detector_model_name: str = Field(default="microsoft/deberta-v3-base", alias="DETECTOR_MODEL_NAME")
@@ -58,9 +63,44 @@ class Settings(BaseSettings):
             return _normalize_async_database_url(value)
         return value
 
+    @staticmethod
+    def _normalize_origin(origin: str) -> str:
+        candidate = origin.strip().strip("'\"")
+        if not candidate:
+            return ""
+
+        if "://" not in candidate:
+            candidate = f"https://{candidate}"
+
+        parsed = urlsplit(candidate)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+
+        # CORS matching is exact on scheme+host+port; paths must be removed.
+        normalized = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        return normalized
+
     @property
     def cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+        raw = self.cors_allowed_origins.strip()
+        if not raw:
+            return []
+
+        values: list[str]
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    values = [str(item) for item in parsed]
+                else:
+                    values = [raw]
+            except json.JSONDecodeError:
+                values = [raw]
+        else:
+            values = raw.split(",")
+
+        normalized = [self._normalize_origin(value) for value in values]
+        return [origin for origin in normalized if origin]
 
 
 @lru_cache
