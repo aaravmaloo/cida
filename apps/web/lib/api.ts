@@ -51,29 +51,8 @@ export type AnalyticsSummary = {
   abuse_block_count: number;
 };
 
-const DEFAULT_API_BASE = "http://localhost:8000";
-
-function resolveApiBase(raw: string | undefined): string {
-  const value = (raw ?? DEFAULT_API_BASE).trim();
-  if (!value) return DEFAULT_API_BASE;
-
-  const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
-
-  try {
-    const url = new URL(withProtocol);
-    if (url.hostname.endsWith(".railway.internal")) {
-      console.warn(
-        "NEXT_PUBLIC_API_BASE_URL points to a Railway internal hostname. Use your API public Railway domain (e.g. https://<service>.up.railway.app).",
-      );
-    }
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    console.warn(`Invalid NEXT_PUBLIC_API_BASE_URL: "${value}". Falling back to ${DEFAULT_API_BASE}.`);
-    return DEFAULT_API_BASE;
-  }
-}
-
-const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_BASE_URL);
+// All browser calls go through same-origin rewrites in next.config.mjs.
+const API_BASE = "/v1";
 
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -90,7 +69,7 @@ async function handle<T>(response: Response): Promise<T> {
 }
 
 export async function analyzeText(text: string): Promise<AnalyzeResponse> {
-  const response = await fetch(`${API_BASE}/v1/analyze`, {
+  const response = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, source: "paste" }),
@@ -103,7 +82,7 @@ export async function analyzeFile(file: File): Promise<AnalyzeResponse> {
   fd.append("file", file);
   fd.append("source", "upload");
 
-  const response = await fetch(`${API_BASE}/v1/analyze`, {
+  const response = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
     body: fd,
   });
@@ -116,7 +95,7 @@ export async function humanizeText(payload: {
   strength: number;
   preserve_terms: string[];
 }): Promise<HumanizeResponse> {
-  const response = await fetch(`${API_BASE}/v1/humanize`, {
+  const response = await fetch(`${API_BASE}/humanize`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -125,7 +104,7 @@ export async function humanizeText(payload: {
 }
 
 export async function createReport(analysisId: string): Promise<ReportCreateResponse> {
-  const response = await fetch(`${API_BASE}/v1/reports`, {
+  const response = await fetch(`${API_BASE}/reports`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ analysis_id: analysisId }),
@@ -134,12 +113,12 @@ export async function createReport(analysisId: string): Promise<ReportCreateResp
 }
 
 export async function getReportStatus(reportId: string): Promise<ReportStatusResponse> {
-  const response = await fetch(`${API_BASE}/v1/reports/${reportId}`);
+  const response = await fetch(`${API_BASE}/reports/${reportId}`);
   return handle<ReportStatusResponse>(response);
 }
 
 export async function adminLogin(passkey: string): Promise<{ access_token: string }> {
-  const response = await fetch(`${API_BASE}/v1/admin/login`, {
+  const response = await fetch(`${API_BASE}/admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ passkey }),
@@ -148,7 +127,7 @@ export async function adminLogin(passkey: string): Promise<{ access_token: strin
 }
 
 export async function fetchAnalytics(token: string): Promise<AnalyticsSummary> {
-  const response = await fetch(`${API_BASE}/v1/analytics/summary`, {
+  const response = await fetch(`${API_BASE}/analytics/summary`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
