@@ -17,11 +17,8 @@ router = APIRouter()
 @router.post("/admin/login", response_model=AdminLoginResponse)
 async def admin_login(body: AdminLoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     settings = get_settings()
-    if not settings.admin_passkey_hash:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin passkey hash not configured")
-
-    if not verify_passkey(body.passkey, settings.admin_passkey_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid passkey")
+    if body.username != settings.admin_user or body.passkey != settings.admin_pass:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
 
     token, expires = create_admin_token()
 
