@@ -33,6 +33,7 @@ app.middleware("http")(trace_context_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,7 +75,12 @@ async def startup_event() -> None:
             await conn.run_sync(Base.metadata.create_all)
 
     Instrumentator().instrument(app).expose(app)
-    logger.info("startup_complete", environment=settings.environment, cors_origins=settings.cors_origins)
+    logger.info(
+        "startup_complete",
+        environment=settings.environment,
+        cors_origins=settings.cors_origins,
+        cors_origin_regex=settings.cors_origin_regex,
+    )
 
 
 @app.on_event("shutdown")
