@@ -51,12 +51,40 @@ export type AnalyticsSummary = {
   abuse_block_count: number;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const DEFAULT_API_BASE = "http://localhost:8000";
+
+function resolveApiBase(raw: string | undefined): string {
+  const value = (raw ?? DEFAULT_API_BASE).trim();
+  if (!value) return DEFAULT_API_BASE;
+
+  const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+
+  try {
+    const url = new URL(withProtocol);
+    if (url.hostname.endsWith(".railway.internal")) {
+      console.warn(
+        "NEXT_PUBLIC_API_BASE_URL points to a Railway internal hostname. Use your API public Railway domain (e.g. https://<service>.up.railway.app).",
+      );
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    console.warn(`Invalid NEXT_PUBLIC_API_BASE_URL: "${value}". Falling back to ${DEFAULT_API_BASE}.`);
+    return DEFAULT_API_BASE;
+  }
+}
+
+const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_BASE_URL);
 
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.detail ?? "Request failed");
+    const detail =
+      typeof payload?.detail === "string"
+        ? payload.detail
+        : typeof payload?.message === "string"
+          ? payload.message
+          : "Request failed";
+    throw new Error(`${response.status} ${response.statusText}: ${detail}`);
   }
   return (await response.json()) as T;
 }
