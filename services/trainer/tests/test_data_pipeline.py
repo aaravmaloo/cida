@@ -49,3 +49,25 @@ def test_load_and_split_unlabeled_source_with_default_label(tmp_path):
     assert len(split.train) > 0
     assert set(split.train[split.label_col].unique()).issubset({0, 1})
 
+
+def test_load_and_split_auto_maps_source_human_vs_other(tmp_path):
+    rows = []
+    for i in range(50):
+        rows.append({"text": f"human sample {i}", "source": "Human"})
+        rows.append({"text": f"gpt sample {i}", "source": "GPT-3.5"})
+        rows.append({"text": f"other model sample {i}", "source": "Bloom-7B"})
+    csv_path = tmp_path / "source_labeled.csv"
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+    split = load_and_split(str(csv_path), label_col="auto")
+
+    combined = pd.concat([split.train, split.val, split.test], ignore_index=True)
+    human_rows = combined[combined["text"].str.contains("human sample", regex=False)]
+    ai_rows = combined[~combined["text"].str.contains("human sample", regex=False)]
+
+    assert split.label_col == "label"
+    assert len(combined) > 0
+    assert set(combined[split.label_col].unique()) == {0, 1}
+    assert human_rows[split.label_col].eq(0).all()
+    assert ai_rows[split.label_col].eq(1).all()
+
