@@ -97,6 +97,11 @@ async def healthz() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+@app.get("/")
+async def root() -> dict:
+    return {"status": "ok"}
+
+
 @app.get("/readyz")
 async def readyz() -> dict:
     async with engine.connect() as conn:
