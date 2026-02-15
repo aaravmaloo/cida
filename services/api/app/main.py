@@ -39,6 +39,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register Prometheus instrumentation before startup; it installs middleware.
+instrumentator = Instrumentator()
+instrumentator.instrument(app).expose(app)
+
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -74,7 +78,6 @@ async def startup_event() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-    Instrumentator().instrument(app).expose(app)
     logger.info(
         "startup_complete",
         environment=settings.environment,
