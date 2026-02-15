@@ -23,7 +23,7 @@ pip install -r requirements.txt
 Run full pipeline:
 
 ```bash
-python -m src --csv ../../train_data/balanced_ai_human_prompts.csv --output-dir ../artifacts/latest --quantize
+python -m src --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --label-col auto --unlabeled-default-label 1 --quantize
 ```
 
 ## Step-by-step commands
@@ -31,7 +31,23 @@ python -m src --csv ../../train_data/balanced_ai_human_prompts.csv --output-dir 
 Train:
 
 ```bash
-python -m src.train --csv ../../train_data/balanced_ai_human_prompts.csv --output-dir ../artifacts/latest --model-name microsoft/deberta-v3-large
+python -m src.train --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --model-name microsoft/deberta-v3-large --label-col auto --unlabeled-default-label 1
+```
+
+Label convention used by this trainer: `0 = human`, `1 = ai`.
+If a file has no label column, set `--unlabeled-default-label` to assign all rows in that file to one class.
+
+Train from scratch with an 8-layer Transformer and enforce 100M+ parameters:
+
+```bash
+python -m src.train --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --model-name bert-base-uncased --from-scratch --layers 8 --hidden-size 1024 --attention-heads 16 --ffn-size 4096 --max-position-embeddings 514 --min-params 100000000 --label-col auto --unlabeled-default-label 1
+```
+
+TPU training (auto-detected in code, 8 epochs):
+Install `torch_xla` matching your TPU VM/PyTorch version before running this command.
+
+```bash
+python -m torch_xla.distributed.xla_run --num_cores 8 -m src.train --data-path ../../train_data/data.parquet --data-path ../../train_data/train_data_1.csv --output-dir ../artifacts/latest --model-name bert-base-uncased --from-scratch --layers 8 --hidden-size 1024 --attention-heads 16 --ffn-size 4096 --max-position-embeddings 514 --min-params 100000000 --label-col auto --unlabeled-default-label 1 --epochs 8 --tpu-bf16
 ```
 
 Calibrate:
