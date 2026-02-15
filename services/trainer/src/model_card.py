@@ -26,9 +26,10 @@ def write_model_card(artifact_dir: str) -> None:
             "labels": {"0": "human", "1": "ai"},
         },
         "dataset": {
-            "source": training_config.get("csv", "../../train_data/balanced_ai_human_prompts.csv"),
+            "source": training_config.get("data_files")
+            or training_config.get("csv", "../../train_data/balanced_ai_human_prompts.csv"),
             "text_column": training_config.get("text_col", "text"),
-            "label_column": training_config.get("label_col", "generated"),
+            "label_column": training_config.get("label_col", "label"),
         },
         "artifacts": {
             "onnx": str(root / "model.onnx"),
