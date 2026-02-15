@@ -1,0 +1,20 @@
+name: Deploy Backend Railway
+
+on:
+  push:
+    branches: ["main", "master"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bervProject/railway-deploy@v2.5.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: api
+      - uses: bervProject/railway-deploy@v2.5.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: worker
+
