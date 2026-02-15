@@ -14,10 +14,11 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
     redis_url: str = Field(alias="REDIS_URL")
 
-    jwt_secret: str = Field(alias="JWT_SECRET")
+    jwt_secret: str = Field(default="dev-jwt-secret-keep-it-secret", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(default=30, alias="JWT_EXPIRE_MINUTES")
-    admin_passkey_hash: str = Field(default="", alias="ADMIN_PASSKEY_HASH")
+    admin_user: str = Field(default="admin", alias="ADMIN_USER")
+    admin_pass: str = Field(default="admin", alias="ADMIN_PASS")
 
     cors_allowed_origins: str = Field(default="http://localhost:3000", alias="CORS_ALLOWED_ORIGINS")
 
