@@ -10,7 +10,8 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 _TEXT_WS = re.compile(r"\s+")
-_DEFAULT_AUTO_LABEL_CANDIDATES = ("label", "generated", "target", "is_ai", "ai")
+_DEFAULT_AUTO_LABEL_CANDIDATES = ("label", "generated", "target", "is_ai", "ai", "source")
+_HUMAN_LABEL_PATTERN = re.compile(r"\bhuman\b")
 
 
 @dataclass
@@ -87,8 +88,33 @@ def _read_dataset(path: str) -> pd.DataFrame:
     raise ValueError(f"Unsupported data file type for {path!r}. Use .csv or .parquet")
 
 
+def _is_human_label_value(value: str) -> bool:
+    return bool(_HUMAN_LABEL_PATTERN.search(value))
+
+
+def _coerce_binary_labels(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    numeric_binary = numeric.where(numeric.isin([0, 1]))
+    if int(numeric_binary.notna().sum()) > 0:
+        return numeric_binary
+
+    text = series.fillna("").astype(str).str.strip().str.lower()
+    non_empty = text != ""
+    if not bool(non_empty.any()):
+        return pd.Series(float("nan"), index=series.index, dtype="float64")
+
+    human_mask = text.apply(_is_human_label_value)
+    if bool(human_mask.any()) and bool((non_empty & ~human_mask).any()):
+        mapped = pd.Series(float("nan"), index=series.index, dtype="float64")
+        mapped.loc[non_empty & human_mask] = 0.0
+        mapped.loc[non_empty & ~human_mask] = 1.0
+        return mapped
+
+    return pd.Series(float("nan"), index=series.index, dtype="float64")
+
+
 def _binary_label_score(series: pd.Series) -> int:
-    return int(pd.to_numeric(series, errors="coerce").isin([0, 1]).sum())
+    return int(_coerce_binary_labels(series).notna().sum())
 
 
 def _resolve_label_column(
@@ -120,7 +146,7 @@ def _resolve_label_column(
         lower = col_name.lower()
         if col_name == text_col:
             continue
-        if any(token in lower for token in ("label", "target", "class", "generated")) and col_name not in candidates:
+        if any(token in lower for token in ("label", "target", "class", "generated", "source")) and col_name not in candidates:
             candidates.append(col_name)
 
     if not candidates:
@@ -144,6 +170,7 @@ def load_and_split(
     label_col: str = "auto",
     seed: int = 42,
     unlabeled_default_label: int | None = None,
+    limit: int | None = None,
 ) -> SplitData:
     if isinstance(data_paths, (str, Path)):
         sources = [str(data_paths)]
@@ -154,6 +181,8 @@ def load_and_split(
         raise ValueError("No dataset paths provided")
     if unlabeled_default_label not in {None, 0, 1}:
         raise ValueError("unlabeled_default_label must be 0, 1, or None")
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be a positive integer")
 
     canonical_label_col = label_col if label_col != "auto" else "label"
     cleaned_frames: list[pd.DataFrame] = []
@@ -179,10 +208,11 @@ def load_and_split(
                 frame = frame.rename(columns={source_label_col: canonical_label_col})
 
         frame[text_col] = frame[text_col].fillna("").astype(str)
-        frame[canonical_label_col] = pd.to_numeric(frame[canonical_label_col], errors="coerce").fillna(-1).astype(int)
+        frame[canonical_label_col] = _coerce_binary_labels(frame[canonical_label_col])
         frame = frame[(frame[text_col].str.strip() != "") & (frame[canonical_label_col].isin([0, 1]))].reset_index(
             drop=True
         )
+        frame[canonical_label_col] = frame[canonical_label_col].astype(int)
         cleaned_frames.append(frame)
 
     if not cleaned_frames:
@@ -191,6 +221,8 @@ def load_and_split(
     df = pd.concat(cleaned_frames, ignore_index=True)
     if df.empty:
         raise ValueError("No valid rows with non-empty text and binary labels (0/1) were found")
+    if limit is not None and len(df) > limit:
+        df = df.sample(n=limit, random_state=seed, replace=False).reset_index(drop=True)
 
     df = dedupe_simhash(df, text_col=text_col, threshold=3)
 
