@@ -1,0 +1,9 @@
+arq==0.26.3
+sqlalchemy[asyncio]==2.0.37
+asyncpg==0.30.0
+redis==5.2.1
+reportlab==4.2.5
+boto3==1.36.14
+pydantic-settings==2.7.1
+orjson==3.10.15
+
