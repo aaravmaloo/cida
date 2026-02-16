@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import re
 import time
+from urllib.parse import quote
 
 import httpx
 from app.core.config import get_settings
@@ -60,8 +61,12 @@ class HumanizerService:
             return None
 
         protected, mapping = self._protect_terms(text, preserve_terms)
-        base_url = self.settings.hf_router_base_url.rstrip("/")
-        endpoint = f"{base_url}/hf-inference/models/{self.model_name}"
+        if self.settings.humanizer_api_url.strip():
+            endpoint = self.settings.humanizer_api_url.strip()
+        else:
+            base_url = self.settings.hf_router_base_url.rstrip("/")
+            encoded_model = quote(self.model_name, safe="")
+            endpoint = f"{base_url}/hf-inference/models/{encoded_model}"
         payload = {
             "inputs": protected,
             "parameters": {"max_new_tokens": self.max_new_tokens, "return_full_text": False},
@@ -77,7 +82,13 @@ class HumanizerService:
                 response = client.post(endpoint, headers=headers, json=payload)
             if response.status_code >= 400:
                 detail = response.text.strip().replace("\n", " ")
-                self._last_model_error = f"api_http_{response.status_code}:{detail[:220]}"
+                if response.status_code == 404 and not self.settings.humanizer_api_url.strip():
+                    self._last_model_error = (
+                        "api_http_404:model_not_available_via_router; "
+                        "set HUMANIZER_API_URL to a dedicated HF endpoint for this model"
+                    )
+                else:
+                    self._last_model_error = f"api_http_{response.status_code}:{detail[:220]}"
                 return None
 
             data = response.json()
