@@ -4,18 +4,11 @@ import difflib
 import re
 import time
 
+import httpx
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.text_metrics import compute_metrics
 from app.utils.text import normalize_text
-
-try:
-    import torch
-    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-except Exception:  # pragma: no cover
-    torch = None
-    AutoModelForSeq2SeqLM = None
-    AutoTokenizer = None
 
 logger = get_logger(__name__)
 
@@ -37,92 +30,7 @@ class HumanizerService:
             )
         self.max_input_tokens = max_input_tokens or self.settings.humanizer_max_input_tokens
         self.max_new_tokens = self.settings.humanizer_max_new_tokens
-        self._effective_input_cap = self.max_input_tokens
-        self._tokenizer = None
-        self._model = None
-        self._model_unavailable = False
         self._last_model_error = ""
-        self._device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
-
-    def _resolve_torch_dtype(self):
-        if torch is None:
-            return None
-
-        value = (self.settings.humanizer_torch_dtype or "float16").strip().lower()
-        mapping = {
-            "float16": torch.float16,
-            "fp16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            "bf16": torch.bfloat16,
-            "float32": torch.float32,
-            "fp32": torch.float32,
-        }
-        return mapping.get(value, torch.float16)
-
-    def _resolve_input_cap(self, tokenizer, model) -> int:
-        candidates: list[int] = []
-
-        tokenizer_max_len = getattr(tokenizer, "model_max_length", None)
-        if isinstance(tokenizer_max_len, int) and 0 < tokenizer_max_len < 100_000:
-            candidates.append(tokenizer_max_len)
-
-        config = getattr(model, "config", None)
-        if config is not None:
-            for attr in ("max_position_embeddings", "max_source_positions", "n_positions"):
-                value = getattr(config, attr, None)
-                if isinstance(value, int) and value > 0:
-                    candidates.append(value)
-
-        if not candidates:
-            return int(self.max_input_tokens)
-
-        return int(max(8, min(self.max_input_tokens, min(candidates))))
-
-    def _get_model(self):
-        if self._tokenizer is not None and self._model is not None:
-            return self._tokenizer, self._model
-        if self._model_unavailable:
-            return None
-        if torch is None or AutoTokenizer is None or AutoModelForSeq2SeqLM is None:
-            self._model_unavailable = True
-            logger.warning("humanizer_runtime_unavailable", reason="missing_torch_or_transformers")
-            return None
-        try:
-            model_kwargs: dict[str, object] = {}
-            try:
-                import accelerate  # noqa: F401
-
-                model_kwargs["low_cpu_mem_usage"] = True
-            except Exception:
-                pass
-
-            dtype = self._resolve_torch_dtype()
-            if dtype is not None:
-                model_kwargs["torch_dtype"] = dtype
-
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                local_files_only=not self.settings.humanizer_allow_remote_download,
-            )
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(
-                self.model_name,
-                local_files_only=not self.settings.humanizer_allow_remote_download,
-                **model_kwargs,
-            )
-            self._model.to(self._device)
-            self._model.eval()
-            self._effective_input_cap = self._resolve_input_cap(self._tokenizer, self._model)
-            self._last_model_error = ""
-            logger.info("humanizer_model_loaded", model=self.model_name, device=self._device)
-            return self._tokenizer, self._model
-        except Exception as exc:
-            self._model_unavailable = True
-            self._tokenizer = None
-            self._model = None
-            message = str(exc).strip().replace("\n", " ")
-            self._last_model_error = f"model_load_failed:{type(exc).__name__}:{message}"
-            logger.exception("humanizer_model_load_failed", model=self.model_name)
-            return None
 
     @staticmethod
     def _protect_terms(text: str, preserve_terms: list[str]) -> tuple[str, dict[str, str]]:
@@ -141,37 +49,72 @@ class HumanizerService:
             out = out.replace(key, term)
         return out
 
-    def _model_rewrite(self, text: str, preserve_terms: list[str]) -> str | None:
-        loaded = self._get_model()
-        if loaded is None or torch is None:
+    def _api_rewrite(self, text: str, preserve_terms: list[str]) -> str | None:
+        if not self.settings.humanizer_use_remote_api:
+            self._last_model_error = "remote_api_disabled"
             return None
 
-        tokenizer, model = loaded
+        token = self.settings.hf_token.strip()
+        if not token:
+            self._last_model_error = "missing_hf_token"
+            return None
+
         protected, mapping = self._protect_terms(text, preserve_terms)
+        base_url = self.settings.hf_router_base_url.rstrip("/")
+        endpoint = f"{base_url}/hf-inference/models/{self.model_name}"
+        payload = {
+            "inputs": protected,
+            "parameters": {"max_new_tokens": self.max_new_tokens, "return_full_text": False},
+            "options": {"wait_for_model": True},
+        }
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
         try:
-            encoded = tokenizer(
-                protected,
-                max_length=self._effective_input_cap,
-                truncation=True,
-                return_tensors="pt",
-            )
-            encoded = {k: v.to(self._device) for k, v in encoded.items()}
-            max_new_tokens = min(self.max_new_tokens, max(64, int(encoded["input_ids"].shape[-1] * 1.4)))
-            with torch.no_grad():
-                generated = model.generate(
-                    **encoded,
-                    max_new_tokens=max_new_tokens,
-                    num_beams=max(1, int(self.settings.humanizer_num_beams)),
-                    no_repeat_ngram_size=3,
-                    early_stopping=True,
-                )
-            rewritten = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            with httpx.Client(timeout=self.settings.humanizer_api_timeout_seconds) as client:
+                response = client.post(endpoint, headers=headers, json=payload)
+            if response.status_code >= 400:
+                detail = response.text.strip().replace("\n", " ")
+                self._last_model_error = f"api_http_{response.status_code}:{detail[:220]}"
+                return None
+
+            data = response.json()
+            if isinstance(data, dict) and data.get("error"):
+                error_detail = str(data["error"]).strip().replace("\n", " ")
+                self._last_model_error = f"api_error:{error_detail[:220]}"
+                return None
+
+            rewritten = ""
+            if isinstance(data, list) and data:
+                first = data[0]
+                if isinstance(first, dict):
+                    for key in ("generated_text", "summary_text", "translation_text", "text"):
+                        value = first.get(key)
+                        if isinstance(value, str) and value.strip():
+                            rewritten = value.strip()
+                            break
+            elif isinstance(data, dict):
+                for key in ("generated_text", "summary_text", "translation_text", "text"):
+                    value = data.get(key)
+                    if isinstance(value, str) and value.strip():
+                        rewritten = value.strip()
+                        break
+
+            if not rewritten:
+                self._last_model_error = "api_unexpected_payload"
+                return None
+
             rewritten = self._restore_terms(rewritten, mapping)
             rewritten = _SPACE_RE.sub(" ", rewritten).strip()
+            self._last_model_error = ""
+            logger.info("humanizer_api_success", model=self.model_name)
             return rewritten or None
         except Exception as exc:
-            self._last_model_error = f"inference_failed:{type(exc).__name__}"
-            logger.exception("humanizer_inference_failed", model=self.model_name)
+            message = str(exc).strip().replace("\n", " ")
+            self._last_model_error = f"api_request_failed:{type(exc).__name__}:{message}"
+            logger.exception("humanizer_api_failed", model=self.model_name)
             return None
 
     @staticmethod
@@ -255,8 +198,8 @@ class HumanizerService:
             normalized = " ".join(tokens[: self.max_input_tokens])
 
         input_metrics = compute_metrics(normalized)
-        mode = "huggingface"
-        rewritten = self._model_rewrite(normalized, preserve_terms)
+        mode = "huggingface_api"
+        rewritten = self._api_rewrite(normalized, preserve_terms)
         if rewritten is None:
             if self.settings.humanizer_require_model:
                 reason = self._last_model_error or "unknown"
