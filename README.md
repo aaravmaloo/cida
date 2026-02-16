@@ -28,7 +28,7 @@ CIDA now uses open-source Hugging Face models directly at runtime.
 - URL: https://huggingface.co/google/flan-t5-small
 - Task: text2text generation / rewriting
 - License: Apache-2.0
-- Alternate model support: set `HUMANIZER_MODEL_NAME` (for example `Eemansleepdeprived/Humaneyes`) and optionally `HUMANIZER_API_URL`.
+- Runtime: local `transformers` inference in API process (no Hugging Face Inference API/router calls).
 
 ## What the System Does
 
@@ -84,15 +84,10 @@ Model/runtime:
 - `DETECTOR_EAGER_LOAD` (default `false`; lazy-load detector to reduce startup RAM)
 - `RELEASE_DETECTOR_FOR_HUMANIZER` (default `true`; frees detector RAM before humanizer load)
 - `HUMANIZER_MODEL_NAME` (default `google/flan-t5-small`)
-- `HUMANIZER_USE_REMOTE_API` (default `true`; calls Hugging Face Inference API)
 - `HUMANIZER_ALLOW_REMOTE_DOWNLOAD`
 - `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
-- `HUMANIZER_API_TIMEOUT_SECONDS` (default `60`)
-- `HUMANIZER_API_URL` (optional direct endpoint URL; overrides router path)
-- `HUMANIZER_TEMPERATURE` (default `0.7`)
-- `HUMANIZER_TOP_P` (default `0.9`)
-- `HF_TOKEN` (required when `HUMANIZER_USE_REMOTE_API=true`)
-- `HF_ROUTER_BASE_URL` (default `https://router.huggingface.co`)
+- `HUMANIZER_TEMPERATURE` (default `0.7`; local sampling)
+- `HUMANIZER_TOP_P` (default `0.9`; local sampling)
 - `HUMANIZER_MAX_INPUT_TOKENS` (upper bound; runtime also clamps to model context window)
 - `HUMANIZER_MAX_NEW_TOKENS`
 
@@ -193,8 +188,6 @@ curl -i https://<api-domain>/readyz
   - https://huggingface.co/shahxeebhassan/bert_base_ai_content_detector
 - Humanizer default model by **Google**:
   - https://huggingface.co/google/flan-t5-small
-- Humanizer alternate model by **Eemansleepdeprived**:
-  - https://huggingface.co/Eemansleepdeprived/Humaneyes
 - Detector dataset by **shahxeebhassan**:
   - https://huggingface.co/datasets/shahxeebhassan/human_vs_ai_sentences
 
