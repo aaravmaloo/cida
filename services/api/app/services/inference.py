@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import json
 import math
-from pathlib import Path
 
-import numpy as np
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.text_metrics import compute_metrics
@@ -13,90 +10,72 @@ from app.utils.text import clamp, normalize_text
 logger = get_logger(__name__)
 
 try:
-    import onnxruntime as ort
-    from transformers import AutoTokenizer
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
 except Exception:  # pragma: no cover
-    ort = None
+    torch = None
+    AutoModelForSequenceClassification = None
     AutoTokenizer = None
 
 
 class DetectorService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.temperature = 1.0
-        self.ece = 0.08
-        self.decision_threshold = 0.5
         self.tokenizer = None
-        self.session = None
+        self.model = None
+        self.device = "cpu"
         self.using_model = False
 
-        self._load_calibration()
         self._load_model_runtime()
 
-    def _load_calibration(self) -> None:
-        calib_path = Path(self.settings.calibration_path)
-        if not calib_path.exists():
-            logger.warning("calibration_missing", path=str(calib_path))
+    def _resolve_ai_label_index(self, num_labels: int) -> int:
+        if self.model is None or num_labels <= 1:
+            return 0
+
+        config = getattr(self.model, "config", None)
+        if config is not None:
+            label2id = getattr(config, "label2id", None) or {}
+            for label, idx in label2id.items():
+                if "ai" in str(label).lower():
+                    candidate = int(idx)
+                    if 0 <= candidate < num_labels:
+                        return candidate
+
+            id2label = getattr(config, "id2label", None) or {}
+            for idx, label in id2label.items():
+                if "ai" in str(label).lower():
+                    candidate = int(idx)
+                    if 0 <= candidate < num_labels:
+                        return candidate
+
+        configured = int(clamp(self.settings.detector_ai_label, 0, max(0, num_labels - 1)))
+        return configured
+
+    def _load_model_runtime(self) -> None:
+        if torch is None or AutoTokenizer is None or AutoModelForSequenceClassification is None:
+            logger.warning("detector_runtime_unavailable", reason="missing_torch_or_transformers")
             return
 
         try:
-            payload = json.loads(calib_path.read_text(encoding="utf-8"))
-            self.temperature = float(payload.get("temperature", 1.0))
-            self.ece = float(payload.get("ece", 0.08))
-            self.decision_threshold = float(payload.get("optimal_threshold", 0.5))
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.settings.detector_model_name,
+                local_files_only=not self.settings.detector_allow_remote_download,
+            )
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                self.settings.detector_model_name,
+                local_files_only=not self.settings.detector_allow_remote_download,
+            )
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model.to(self.device)
+            self.model.eval()
+            self.using_model = True
+            logger.info("detector_model_loaded", model=self.settings.detector_model_name, device=self.device)
         except Exception:
-            logger.exception("calibration_load_failed", path=str(calib_path))
+            logger.exception("detector_model_load_failed", model=self.settings.detector_model_name)
+            self.tokenizer = None
+            self.model = None
+            self.using_model = False
 
-    def _tokenizer_candidates(self, onnx_path: Path) -> list[Path | str]:
-        candidates: list[Path | str] = []
-
-        if self.settings.detector_tokenizer_path:
-            candidates.append(Path(self.settings.detector_tokenizer_path))
-
-        candidates.append(onnx_path.parent / "model")
-        candidates.append(Path(self.settings.calibration_path).parent / "model")
-        candidates.append(Path(self.settings.detector_onnx_path).parent / "runtime_bundle" / "model")
-        candidates.append(self.settings.detector_model_name)
-        return candidates
-
-    def _load_tokenizer(self, onnx_path: Path) -> None:
-        if AutoTokenizer is None:
-            return
-
-        for candidate in self._tokenizer_candidates(onnx_path):
-            try:
-                if isinstance(candidate, Path):
-                    if not candidate.exists():
-                        continue
-                    self.tokenizer = AutoTokenizer.from_pretrained(candidate)
-                    logger.info("tokenizer_loaded", source=str(candidate))
-                    return
-
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    candidate,
-                    local_files_only=not self.settings.detector_allow_remote_download,
-                )
-                logger.info("tokenizer_loaded", source=str(candidate))
-                return
-            except Exception:
-                continue
-
-        logger.warning("tokenizer_unavailable", candidates=[str(c) for c in self._tokenizer_candidates(onnx_path)])
-
-    def _load_model_runtime(self) -> None:
-        onnx_path = Path(self.settings.detector_onnx_path)
-
-        if ort is not None and onnx_path.exists():
-            try:
-                self.session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-                logger.info("onnx_session_loaded", path=str(onnx_path))
-            except Exception:
-                logger.exception("onnx_session_failed", path=str(onnx_path))
-        else:
-            logger.warning("onnx_missing_or_ort_unavailable", path=str(onnx_path), ort_available=bool(ort))
-
-        self._load_tokenizer(onnx_path)
-        self.using_model = self.session is not None and self.tokenizer is not None
         if not self.using_model:
             logger.warning("detector_using_heuristic_fallback")
 
@@ -118,31 +97,40 @@ class DetectorService:
         )
         return float(clamp(logit, -6.0, 6.0))
 
-    def _model_logit(self, text: str) -> float:
-        if self.session is None or self.tokenizer is None:
-            return self._heuristic_logit(text)
+    def _model_probability(self, text: str) -> float:
+        if self.model is None or self.tokenizer is None or torch is None:
+            return self._sigmoid(self._heuristic_logit(text))
 
-        encoded = self.tokenizer(
-            text,
-            max_length=512,
-            truncation=True,
-            return_tensors="np",
-            padding="max_length",
-        )
-        feeds = {
-            "input_ids": encoded["input_ids"].astype(np.int64),
-            "attention_mask": encoded["attention_mask"].astype(np.int64),
-        }
-        outputs = self.session.run(None, feeds)
-        logits = outputs[0]
-        return float(logits.reshape(-1)[0])
+        try:
+            encoded = self.tokenizer(
+                text,
+                max_length=self.settings.detector_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            encoded = {k: v.to(self.device) for k, v in encoded.items()}
+
+            with torch.no_grad():
+                outputs = self.model(**encoded)
+                logits = outputs.logits
+
+            if logits.ndim == 1 or logits.shape[-1] == 1:
+                prob = float(torch.sigmoid(logits.reshape(-1)[0]).item())
+                return float(clamp(prob, 0.0, 1.0))
+
+            probs = torch.softmax(logits, dim=-1)[0]
+            ai_index = self._resolve_ai_label_index(probs.shape[-1])
+            prob = float(probs[ai_index].item())
+            return float(clamp(prob, 0.0, 1.0))
+        except Exception:
+            logger.exception("detector_inference_failed", model=self.settings.detector_model_name)
+            return self._sigmoid(self._heuristic_logit(text))
 
     def _confidence_band(self, prob: float) -> str:
-        # Confidence is distance from tuned operating threshold, penalized by ECE.
-        distance = abs(prob - self.decision_threshold)
-        adjusted = max(0.0, distance - min(0.25, self.ece))
+        distance = abs(prob - 0.5)
+        adjusted = distance
         if not self.using_model:
-            adjusted = min(adjusted, 0.48)  # cap fallback confidence
+            adjusted = min(adjusted, 0.28)
 
         if adjusted > 0.30:
             return "high"
@@ -154,9 +142,7 @@ class DetectorService:
         normalized = normalize_text(text)
         metrics = compute_metrics(normalized)
 
-        logit = self._model_logit(normalized)
-        calibrated = logit / max(0.05, self.temperature)
-        prob = self._sigmoid(calibrated)
+        prob = self._model_probability(normalized)
 
         return {
             "ai_probability": round(prob, 6),
