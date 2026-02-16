@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import math
 
 from app.core.config import get_settings
@@ -25,8 +26,10 @@ class DetectorService:
         self.model = None
         self.device = "cpu"
         self.using_model = False
+        self._runtime_initialized = False
 
-        self._load_model_runtime()
+        if self.settings.detector_eager_load:
+            self._ensure_runtime_loaded()
 
     def _resolve_ai_label_index(self, num_labels: int) -> int:
         if self.model is None or num_labels <= 1:
@@ -78,6 +81,22 @@ class DetectorService:
 
         if not self.using_model:
             logger.warning("detector_using_heuristic_fallback")
+        self._runtime_initialized = True
+
+    def _ensure_runtime_loaded(self) -> None:
+        if self._runtime_initialized:
+            return
+        self._load_model_runtime()
+
+    def release_model(self) -> None:
+        self.model = None
+        self.tokenizer = None
+        self.using_model = False
+        self._runtime_initialized = False
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        logger.info("detector_model_released")
 
     @staticmethod
     def _sigmoid(x: float) -> float:
@@ -98,6 +117,7 @@ class DetectorService:
         return float(clamp(logit, -6.0, 6.0))
 
     def _model_probability(self, text: str) -> float:
+        self._ensure_runtime_loaded()
         if self.model is None or self.tokenizer is None or torch is None:
             return self._sigmoid(self._heuristic_logit(text))
 
