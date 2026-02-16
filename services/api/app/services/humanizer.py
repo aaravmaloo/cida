@@ -73,6 +73,14 @@ class HumanizerService:
             logger.warning("humanizer_runtime_unavailable", reason="missing_torch_or_transformers")
             return None
         try:
+            model_kwargs: dict[str, object] = {}
+            try:
+                import accelerate  # noqa: F401
+
+                model_kwargs["low_cpu_mem_usage"] = True
+            except Exception:
+                pass
+
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
                 local_files_only=not self.settings.humanizer_allow_remote_download,
@@ -80,6 +88,7 @@ class HumanizerService:
             self._model = AutoModelForSeq2SeqLM.from_pretrained(
                 self.model_name,
                 local_files_only=not self.settings.humanizer_allow_remote_download,
+                **model_kwargs,
             )
             self._model.to(self._device)
             self._model.eval()
@@ -87,11 +96,12 @@ class HumanizerService:
             self._last_model_error = ""
             logger.info("humanizer_model_loaded", model=self.model_name, device=self._device)
             return self._tokenizer, self._model
-        except Exception:
+        except Exception as exc:
             self._model_unavailable = True
             self._tokenizer = None
             self._model = None
-            self._last_model_error = "model_load_failed"
+            message = str(exc).strip().replace("\n", " ")
+            self._last_model_error = f"model_load_failed:{type(exc).__name__}:{message}"
             logger.exception("humanizer_model_load_failed", model=self.model_name)
             return None
 
