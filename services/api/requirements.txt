@@ -20,4 +20,5 @@ httpx==0.28.1
 tenacity==9.0.0
 transformers==4.48.1
 sentencepiece==0.2.0
+protobuf==5.29.3
 
