@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     humanizer_model_name: str = Field(default="Eemansleepdeprived/Humaneyes", alias="HUMANIZER_MODEL_NAME")
     humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
+    humanizer_require_model: bool = Field(default=True, alias="HUMANIZER_REQUIRE_MODEL")
     humanizer_max_input_tokens: int = Field(default=512, alias="HUMANIZER_MAX_INPUT_TOKENS")
     humanizer_max_new_tokens: int = Field(default=256, alias="HUMANIZER_MAX_NEW_TOKENS")
 
