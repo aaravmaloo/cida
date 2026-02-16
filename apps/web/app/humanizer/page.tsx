@@ -125,6 +125,14 @@ export default function HumanizerPage() {
               Latency: <strong>{mutation.data.latency_ms} ms</strong>
             </p>
           </div>
+          <div className="mt-3 text-xs text-cida-mute">
+            <p>
+              Runtime: <strong>{mutation.data.humanizer_mode}</strong>
+            </p>
+            <p>
+              Model: <strong>{mutation.data.humanizer_model}</strong>
+            </p>
+          </div>
         </section>
       )}
     </main>
