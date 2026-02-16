@@ -4,13 +4,20 @@ import difflib
 import re
 import time
 
+from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.services.text_metrics import compute_metrics
 from app.utils.text import normalize_text
 
 try:
-    from transformers import pipeline
+    import torch
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 except Exception:  # pragma: no cover
-    pipeline = None
+    torch = None
+    AutoModelForSeq2SeqLM = None
+    AutoTokenizer = None
+
+logger = get_logger(__name__)
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -18,29 +25,43 @@ _SPACE_RE = re.compile(r"\s+")
 
 
 class HumanizerService:
-    def __init__(self, max_input_tokens: int = 1800) -> None:
-        self.max_input_tokens = max_input_tokens
-        self._pipeline = None
-        self._pipeline_unavailable = False
+    def __init__(self, max_input_tokens: int | None = None) -> None:
+        self.settings = get_settings()
+        self.max_input_tokens = max_input_tokens or self.settings.humanizer_max_input_tokens
+        self.max_new_tokens = self.settings.humanizer_max_new_tokens
+        self._tokenizer = None
+        self._model = None
+        self._model_unavailable = False
+        self._device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
 
-    def _get_pipeline(self):
-        if self._pipeline is not None:
-            return self._pipeline
-        if self._pipeline_unavailable:
+    def _get_model(self):
+        if self._tokenizer is not None and self._model is not None:
+            return self._tokenizer, self._model
+        if self._model_unavailable:
             return None
-        if pipeline is None:
-            self._pipeline_unavailable = True
+        if torch is None or AutoTokenizer is None or AutoModelForSeq2SeqLM is None:
+            self._model_unavailable = True
+            logger.warning("humanizer_runtime_unavailable", reason="missing_torch_or_transformers")
             return None
         try:
-            self._pipeline = pipeline(
-                "text2text-generation",
-                model="google/flan-t5-base",
-                tokenizer="google/flan-t5-base",
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.settings.humanizer_model_name,
+                local_files_only=not self.settings.humanizer_allow_remote_download,
             )
+            self._model = AutoModelForSeq2SeqLM.from_pretrained(
+                self.settings.humanizer_model_name,
+                local_files_only=not self.settings.humanizer_allow_remote_download,
+            )
+            self._model.to(self._device)
+            self._model.eval()
+            logger.info("humanizer_model_loaded", model=self.settings.humanizer_model_name, device=self._device)
+            return self._tokenizer, self._model
         except Exception:
-            self._pipeline_unavailable = True
-            self._pipeline = None
-        return self._pipeline
+            self._model_unavailable = True
+            self._tokenizer = None
+            self._model = None
+            logger.exception("humanizer_model_load_failed", model=self.settings.humanizer_model_name)
+            return None
 
     @staticmethod
     def _protect_terms(text: str, preserve_terms: list[str]) -> tuple[str, dict[str, str]]:
@@ -58,6 +79,38 @@ class HumanizerService:
         for key, term in mapping.items():
             out = out.replace(key, term)
         return out
+
+    def _model_rewrite(self, text: str, preserve_terms: list[str]) -> str | None:
+        loaded = self._get_model()
+        if loaded is None or torch is None:
+            return None
+
+        tokenizer, model = loaded
+        protected, mapping = self._protect_terms(text, preserve_terms)
+        try:
+            encoded = tokenizer(
+                protected,
+                max_length=self.max_input_tokens,
+                truncation=True,
+                return_tensors="pt",
+            )
+            encoded = {k: v.to(self._device) for k, v in encoded.items()}
+            max_new_tokens = min(self.max_new_tokens, max(64, int(encoded["input_ids"].shape[-1] * 1.4)))
+            with torch.no_grad():
+                generated = model.generate(
+                    **encoded,
+                    max_new_tokens=max_new_tokens,
+                    num_beams=4,
+                    no_repeat_ngram_size=3,
+                    early_stopping=True,
+                )
+            rewritten = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            rewritten = self._restore_terms(rewritten, mapping)
+            rewritten = _SPACE_RE.sub(" ", rewritten).strip()
+            return rewritten or None
+        except Exception:
+            logger.exception("humanizer_inference_failed", model=self.settings.humanizer_model_name)
+            return None
 
     @staticmethod
     def _split_long_sentence(sentence: str) -> list[str]:
@@ -140,22 +193,11 @@ class HumanizerService:
             normalized = " ".join(tokens[: self.max_input_tokens])
 
         input_metrics = compute_metrics(normalized)
-
-        prompt = (
-            f"Rewrite the following text for {style} clarity with natural flow, "
-            f"preserving meaning and terms: {', '.join(preserve_terms) if preserve_terms else 'none'}. "
-            f"Rewrite strength {strength}/3.\n\nText:\n{normalized}"
-        )
-
-        pipe = self._get_pipeline()
-        if pipe is not None:
-            try:
-                result = pipe(prompt, max_new_tokens=max(128, int(len(tokens) * 1.25)), do_sample=False)
-                rewritten = result[0]["generated_text"].strip()
-            except Exception:
-                rewritten = self._fallback_rewrite(normalized, style, strength, preserve_terms)
-        else:
+        rewritten = self._model_rewrite(normalized, preserve_terms)
+        if rewritten is None:
             rewritten = self._fallback_rewrite(normalized, style, strength, preserve_terms)
+        elif style != "natural" or strength > 1:
+            rewritten = self._fallback_rewrite(rewritten, style, strength, preserve_terms)
 
         output_metrics = compute_metrics(rewritten)
 
