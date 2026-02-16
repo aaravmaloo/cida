@@ -88,6 +88,7 @@ Model/runtime:
 - `HUMANIZER_ALLOW_REMOTE_DOWNLOAD`
 - `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
 - `HUMANIZER_API_TIMEOUT_SECONDS` (default `60`)
+- `HUMANIZER_API_URL` (optional direct endpoint URL; overrides router path)
 - `HF_TOKEN` (required when `HUMANIZER_USE_REMOTE_API=true`)
 - `HF_ROUTER_BASE_URL` (default `https://router.huggingface.co`)
 - `HUMANIZER_MAX_INPUT_TOKENS` (upper bound; runtime also clamps to model context window)
