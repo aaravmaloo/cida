@@ -81,9 +81,13 @@ Model/runtime:
 - `DETECTOR_ALLOW_REMOTE_DOWNLOAD` (`true` to pull from HF when not cached)
 - `DETECTOR_AI_LABEL` (default `1`)
 - `DETECTOR_MAX_LENGTH`
+- `DETECTOR_EAGER_LOAD` (default `false`; lazy-load detector to reduce startup RAM)
+- `RELEASE_DETECTOR_FOR_HUMANIZER` (default `true`; frees detector RAM before humanizer load)
 - `HUMANIZER_MODEL_NAME` (default `Eemansleepdeprived/Humaneyes`)
 - `HUMANIZER_ALLOW_REMOTE_DOWNLOAD`
 - `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
+- `HUMANIZER_TORCH_DTYPE` (default `float16` to reduce RAM usage on CPU)
+- `HUMANIZER_NUM_BEAMS` (default `2`; lower beam count reduces memory/latency)
 - `HUMANIZER_MAX_INPUT_TOKENS` (upper bound; runtime also clamps to model context window)
 - `HUMANIZER_MAX_NEW_TOKENS`
 
