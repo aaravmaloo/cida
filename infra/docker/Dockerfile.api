@@ -5,64 +5,26 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-ARG INSTALL_TORCH_CPU=0
-
 WORKDIR /app
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY services/api/requirements.txt /tmp/requirements.txt
-COPY services/api/requirements-torch-cpu.txt /tmp/requirements-torch-cpu.txt
 RUN pip install --upgrade pip \
-    && pip install -r /tmp/requirements.txt \
-    && if [ "$INSTALL_TORCH_CPU" = "1" ]; then pip install -r /tmp/requirements-torch-cpu.txt; fi
+    && pip install -r /tmp/requirements.txt
 
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    HF_HOME=/app/.cache/huggingface
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY services/api /app
-COPY services/artifacts/artifacts_latest /app/runtime_bundle
 
-RUN python - <<'PY'
-from pathlib import Path
-import json
-
-model_name = "microsoft/deberta-v3-large"
-runtime_bundle = Path("/app/runtime_bundle")
-runtime_bundle.mkdir(parents=True, exist_ok=True)
-
-calibration = runtime_bundle / "calibration.json"
-if not calibration.exists():
-    calibration.write_text(
-        json.dumps(
-            {
-                "temperature": 1.0,
-                "ece": 0.08,
-                "optimal_threshold": 0.5,
-                "threshold_metrics": {"threshold": 0.5, "f1": 0.0, "accuracy": 0.0},
-                "reliability_bins": [],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-tokenizer_dir = runtime_bundle / "model"
-if not (tokenizer_dir / "tokenizer.json").exists() and not (tokenizer_dir / "tokenizer_config.json").exists():
-    try:
-        from transformers import AutoTokenizer
-
-        tokenizer_dir.mkdir(parents=True, exist_ok=True)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=False)
-        tokenizer.save_pretrained(tokenizer_dir)
-    except Exception as exc:
-        print(f"[build] tokenizer bootstrap failed: {exc}")
-PY
+RUN mkdir -p /app/.cache/huggingface
 
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
