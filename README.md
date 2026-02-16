@@ -24,11 +24,11 @@ CIDA now uses open-source Hugging Face models directly at runtime.
 
 ### Humanizer
 
-- Model: `Eemansleepdeprived/Humaneyes`
-- URL: https://huggingface.co/Eemansleepdeprived/Humaneyes
-- Task: text2text generation / paraphrasing
-- Base: `tuner007/pegasus_paraphrase`
-- License: MIT
+- Default model: `google/flan-t5-small`
+- URL: https://huggingface.co/google/flan-t5-small
+- Task: text2text generation / rewriting
+- License: Apache-2.0
+- Alternate model support: set `HUMANIZER_MODEL_NAME` (for example `Eemansleepdeprived/Humaneyes`) and optionally `HUMANIZER_API_URL`.
 
 ## What the System Does
 
@@ -83,7 +83,7 @@ Model/runtime:
 - `DETECTOR_MAX_LENGTH`
 - `DETECTOR_EAGER_LOAD` (default `false`; lazy-load detector to reduce startup RAM)
 - `RELEASE_DETECTOR_FOR_HUMANIZER` (default `true`; frees detector RAM before humanizer load)
-- `HUMANIZER_MODEL_NAME` (default `Eemansleepdeprived/Humaneyes`)
+- `HUMANIZER_MODEL_NAME` (default `google/flan-t5-small`)
 - `HUMANIZER_USE_REMOTE_API` (default `true`; calls Hugging Face Inference API)
 - `HUMANIZER_ALLOW_REMOTE_DOWNLOAD`
 - `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
@@ -189,7 +189,9 @@ curl -i https://<api-domain>/readyz
 
 - Detector model by **shahxeebhassan**:
   - https://huggingface.co/shahxeebhassan/bert_base_ai_content_detector
-- Humanizer model by **Eemansleepdeprived**:
+- Humanizer default model by **Google**:
+  - https://huggingface.co/google/flan-t5-small
+- Humanizer alternate model by **Eemansleepdeprived**:
   - https://huggingface.co/Eemansleepdeprived/Humaneyes
 - Detector dataset by **shahxeebhassan**:
   - https://huggingface.co/datasets/shahxeebhassan/human_vs_ai_sentences
