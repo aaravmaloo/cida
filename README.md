@@ -260,6 +260,11 @@ Expected outputs include:
 
 Deploy these artifacts with API and point env vars accordingly (`DETECTOR_ONNX_PATH`, `CALIBRATION_PATH`, tokenizer path).
 
+### Railway-first (no local hosting required)
+
+The API Docker image bakes detector artifacts from `services/artifacts/artifacts_latest` into `/app/runtime_bundle` at build time.
+If `calibration.json` is missing, a safe default is generated during build. If tokenizer files are missing, build attempts to fetch and save the tokenizer for `microsoft/deberta-v3-large`.
+
 ## Health and Ops Checks
 
 ```bash

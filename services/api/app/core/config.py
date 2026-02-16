@@ -40,10 +40,10 @@ class Settings(BaseSettings):
 
     model_version: str = Field(default="deberta-v3-large-v2", alias="MODEL_VERSION")
     detector_model_name: str = Field(default="microsoft/deberta-v3-large", alias="DETECTOR_MODEL_NAME")
-    detector_onnx_path: str = Field(default="../trainer/artifacts/latest/model.onnx", alias="DETECTOR_ONNX_PATH")
-    detector_tokenizer_path: str = Field(default="", alias="DETECTOR_TOKENIZER_PATH")
+    detector_onnx_path: str = Field(default="/app/runtime_bundle/model.onnx", alias="DETECTOR_ONNX_PATH")
+    detector_tokenizer_path: str = Field(default="/app/runtime_bundle/model", alias="DETECTOR_TOKENIZER_PATH")
     detector_allow_remote_download: bool = Field(default=False, alias="DETECTOR_ALLOW_REMOTE_DOWNLOAD")
-    calibration_path: str = Field(default="../trainer/artifacts/latest/calibration.json", alias="CALIBRATION_PATH")
+    calibration_path: str = Field(default="/app/runtime_bundle/calibration.json", alias="CALIBRATION_PATH")
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
