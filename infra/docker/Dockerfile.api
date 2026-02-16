@@ -16,6 +16,7 @@ RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements-torch-cpu.txt \
     && find /opt/venv/lib/python*/site-packages -maxdepth 1 -type d \( -name "nvidia*" -o -name "triton*" \) -exec rm -rf {} + \
     && find /opt/venv/lib/python*/site-packages -maxdepth 1 -type d \( -name "nvidia*dist-info" -o -name "triton*dist-info" \) -exec rm -rf {} + \
+    && test -z "$(find /opt/venv/lib/python*/site-packages -maxdepth 1 -type d \( -name "nvidia*" -o -name "triton*" \) -print -quit)" \
     && rm -rf /opt/venv/lib/python*/site-packages/pip /opt/venv/lib/python*/site-packages/pip-* \
     && rm -rf /opt/venv/lib/python*/site-packages/setuptools /opt/venv/lib/python*/site-packages/setuptools-* \
     && rm -rf /opt/venv/lib/python*/site-packages/wheel /opt/venv/lib/python*/site-packages/wheel-* \
