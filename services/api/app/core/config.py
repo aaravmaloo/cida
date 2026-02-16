@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     detector_eager_load: bool = Field(default=False, alias="DETECTOR_EAGER_LOAD")
     release_detector_for_humanizer: bool = Field(default=True, alias="RELEASE_DETECTOR_FOR_HUMANIZER")
 
-    humanizer_model_name: str = Field(default="Eemansleepdeprived/Humaneyes", alias="HUMANIZER_MODEL_NAME")
+    humanizer_model_name: str = Field(default="google/flan-t5-small", alias="HUMANIZER_MODEL_NAME")
     humanizer_use_remote_api: bool = Field(default=True, alias="HUMANIZER_USE_REMOTE_API")
     humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
     humanizer_require_model: bool = Field(default=True, alias="HUMANIZER_REQUIRE_MODEL")
