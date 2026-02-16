@@ -54,7 +54,12 @@ async def humanize_content(
         output_word_count=result["output_word_count"],
         readability_delta=result["readability_delta"],
         latency_ms=latency_ms,
-        metadata_json={"quality_flags": result["quality_flags"], "source_ip": ip},
+        metadata_json={
+            "quality_flags": result["quality_flags"],
+            "source_ip": ip,
+            "humanizer_mode": result["humanizer_mode"],
+            "humanizer_model": result["humanizer_model"],
+        },
     )
     db.add(event)
     await db.commit()
@@ -65,6 +70,8 @@ async def humanize_content(
         diff_stats=result["diff_stats"],
         readability_delta=result["readability_delta"],
         quality_flags=result["quality_flags"],
+        humanizer_mode=result["humanizer_mode"],
+        humanizer_model=result["humanizer_model"],
         latency_ms=latency_ms,
     )
 
