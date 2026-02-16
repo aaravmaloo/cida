@@ -3,13 +3,19 @@ from __future__ import annotations
 import difflib
 import re
 import time
-from urllib.parse import quote
 
-import httpx
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.text_metrics import compute_metrics
 from app.utils.text import normalize_text
+
+try:
+    import torch
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+except Exception:  # pragma: no cover
+    torch = None
+    AutoModelForSeq2SeqLM = None
+    AutoTokenizer = None
 
 logger = get_logger(__name__)
 
@@ -17,8 +23,6 @@ logger = get_logger(__name__)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _SPACE_RE = re.compile(r"\s+")
 _DEFAULT_HUMANIZER_MODEL_ID = "google/flan-t5-small"
-_LEGACY_HF_API_PREFIX = "https://api-inference.huggingface.co/models/"
-_LEGACY_HF_TASK_PREFIX = "https://api-inference.huggingface.co/v1/text2text-generation/"
 
 
 class HumanizerService:
@@ -28,7 +32,66 @@ class HumanizerService:
         self.model_name = configured or _DEFAULT_HUMANIZER_MODEL_ID
         self.max_input_tokens = max_input_tokens or self.settings.humanizer_max_input_tokens
         self.max_new_tokens = self.settings.humanizer_max_new_tokens
+        self._effective_input_cap = self.max_input_tokens
+        self._tokenizer = None
+        self._model = None
+        self._model_unavailable = False
         self._last_model_error = ""
+        self._device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
+
+    def _resolve_input_cap(self, tokenizer, model) -> int:
+        candidates: list[int] = []
+
+        tokenizer_max_len = getattr(tokenizer, "model_max_length", None)
+        if isinstance(tokenizer_max_len, int) and 0 < tokenizer_max_len < 100_000:
+            candidates.append(tokenizer_max_len)
+
+        config = getattr(model, "config", None)
+        if config is not None:
+            for attr in ("max_position_embeddings", "max_source_positions", "n_positions"):
+                value = getattr(config, attr, None)
+                if isinstance(value, int) and value > 0:
+                    candidates.append(value)
+
+        if not candidates:
+            return int(self.max_input_tokens)
+
+        return int(max(8, min(self.max_input_tokens, min(candidates))))
+
+    def _get_model(self):
+        if self._tokenizer is not None and self._model is not None:
+            return self._tokenizer, self._model
+        if self._model_unavailable:
+            return None
+        if torch is None or AutoTokenizer is None or AutoModelForSeq2SeqLM is None:
+            self._model_unavailable = True
+            self._last_model_error = "runtime_unavailable:missing_torch_or_transformers"
+            logger.warning("humanizer_runtime_unavailable", reason="missing_torch_or_transformers")
+            return None
+
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                local_files_only=not self.settings.humanizer_allow_remote_download,
+            )
+            self._model = AutoModelForSeq2SeqLM.from_pretrained(
+                self.model_name,
+                local_files_only=not self.settings.humanizer_allow_remote_download,
+            )
+            self._model.to(self._device)
+            self._model.eval()
+            self._effective_input_cap = self._resolve_input_cap(self._tokenizer, self._model)
+            self._last_model_error = ""
+            logger.info("humanizer_model_loaded", model=self.model_name, device=self._device)
+            return self._tokenizer, self._model
+        except Exception as exc:
+            message = str(exc).strip().replace("\n", " ")
+            self._model_unavailable = True
+            self._tokenizer = None
+            self._model = None
+            self._last_model_error = f"model_load_failed:{type(exc).__name__}:{message}"
+            logger.exception("humanizer_model_load_failed", model=self.model_name)
+            return None
 
     @staticmethod
     def _protect_terms(text: str, preserve_terms: list[str]) -> tuple[str, dict[str, str]]:
@@ -47,107 +110,68 @@ class HumanizerService:
             out = out.replace(key, term)
         return out
 
-    def _resolve_endpoint(self) -> str:
-        custom = self.settings.humanizer_api_url.strip()
-        base_url = self.settings.hf_router_base_url.rstrip("/")
-        if custom:
-            if custom.startswith(_LEGACY_HF_API_PREFIX):
-                model_id = custom[len(_LEGACY_HF_API_PREFIX) :].strip("/")
-                return f"{base_url}/hf-inference/models/{quote(model_id, safe='')}"
-            if custom.startswith(_LEGACY_HF_TASK_PREFIX):
-                model_id = custom[len(_LEGACY_HF_TASK_PREFIX) :].strip("/")
-                return f"{base_url}/v1/text2text-generation/{quote(model_id, safe='')}"
-            return custom
-
-        return f"{base_url}/v1/text2text-generation/{quote(self.model_name, safe='')}"
-
     @staticmethod
     def _build_prompt(*, text: str, style: str, strength: int, preserve_terms: list[str]) -> str:
         preserve = ", ".join(t for t in preserve_terms if t.strip()) or "none"
         return (
-            "Rewrite this to sound natural and human while preserving the original meaning. "
-            f"Target style: {style}. Rewrite strength: {strength}/3. "
-            f"Preserve these terms exactly: {preserve}.\n\n"
+            "Rewrite the following text so it sounds natural and human while keeping the same meaning. "
+            f"Style: {style}. Rewrite strength: {strength}/3. Preserve these terms exactly: {preserve}.\n\n"
             f"Text:\n{text}"
         )
 
-    def _api_rewrite(self, text: str, style: str, strength: int, preserve_terms: list[str]) -> str | None:
-        if not self.settings.humanizer_use_remote_api:
-            self._last_model_error = "remote_api_disabled"
+    def _model_rewrite(self, text: str, style: str, strength: int, preserve_terms: list[str]) -> str | None:
+        loaded = self._get_model()
+        if loaded is None or torch is None:
             return None
 
-        token = self.settings.hf_token.strip()
-        if not token:
-            self._last_model_error = "missing_hf_token"
-            return None
-
+        tokenizer, model = loaded
         protected, mapping = self._protect_terms(text, preserve_terms)
-        endpoint = self._resolve_endpoint()
         prompt = self._build_prompt(text=protected, style=style, strength=strength, preserve_terms=preserve_terms)
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": self.max_new_tokens,
-                "temperature": float(self.settings.humanizer_temperature),
-                "top_p": float(self.settings.humanizer_top_p),
-                "return_full_text": False,
-            },
-            "options": {"wait_for_model": True},
-        }
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
 
         try:
-            with httpx.Client(timeout=self.settings.humanizer_api_timeout_seconds) as client:
-                response = client.post(endpoint, headers=headers, json=payload)
-            if response.status_code >= 400:
-                detail = response.text.strip().replace("\n", " ")
-                if response.status_code == 404 and not self.settings.humanizer_api_url.strip():
-                    self._last_model_error = (
-                        f"api_http_404:model_not_available_via_router:{self.model_name}; "
-                        "try HUMANIZER_MODEL_NAME=google/flan-t5-small or set HUMANIZER_API_URL"
-                    )
-                else:
-                    self._last_model_error = f"api_http_{response.status_code}:{detail[:220]}"
-                return None
+            encoded = tokenizer(
+                prompt,
+                max_length=self._effective_input_cap,
+                truncation=True,
+                return_tensors="pt",
+            )
+            encoded = {k: v.to(self._device) for k, v in encoded.items()}
+            max_new_tokens = min(self.max_new_tokens, max(64, int(encoded["input_ids"].shape[-1] * 1.2)))
 
-            data = response.json()
-            if isinstance(data, dict) and data.get("error"):
-                error_detail = str(data["error"]).strip().replace("\n", " ")
-                self._last_model_error = f"api_error:{error_detail[:220]}"
-                return None
+            temperature = float(self.settings.humanizer_temperature)
+            top_p = float(self.settings.humanizer_top_p)
+            generation_kwargs: dict[str, int | float | bool] = {
+                "max_new_tokens": max_new_tokens,
+                "no_repeat_ngram_size": 3,
+            }
 
-            rewritten = ""
-            if isinstance(data, list) and data:
-                first = data[0]
-                if isinstance(first, dict):
-                    for key in ("generated_text", "summary_text", "translation_text", "text"):
-                        value = first.get(key)
-                        if isinstance(value, str) and value.strip():
-                            rewritten = value.strip()
-                            break
-            elif isinstance(data, dict):
-                for key in ("generated_text", "summary_text", "translation_text", "text"):
-                    value = data.get(key)
-                    if isinstance(value, str) and value.strip():
-                        rewritten = value.strip()
-                        break
+            if temperature > 0 and top_p > 0:
+                generation_kwargs["do_sample"] = True
+                generation_kwargs["temperature"] = temperature
+                generation_kwargs["top_p"] = top_p
+            else:
+                generation_kwargs["num_beams"] = 4
+                generation_kwargs["early_stopping"] = True
 
-            if not rewritten:
-                self._last_model_error = "api_unexpected_payload"
-                return None
+            with torch.no_grad():
+                generated = model.generate(**encoded, **generation_kwargs)
 
+            rewritten = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            rewritten = re.sub(r"^\s*(rewrite|rewritten text|output)\s*:\s*", "", rewritten, flags=re.IGNORECASE)
             rewritten = self._restore_terms(rewritten, mapping)
             rewritten = _SPACE_RE.sub(" ", rewritten).strip()
+
+            if not rewritten:
+                self._last_model_error = "inference_empty_output"
+                return None
+
             self._last_model_error = ""
-            logger.info("humanizer_api_success", model=self.model_name)
+            logger.info("humanizer_inference_success", model=self.model_name, device=self._device)
             return rewritten or None
         except Exception as exc:
             message = str(exc).strip().replace("\n", " ")
-            self._last_model_error = f"api_request_failed:{type(exc).__name__}:{message}"
-            logger.exception("humanizer_api_failed", model=self.model_name)
+            self._last_model_error = f"inference_failed:{type(exc).__name__}:{message}"
+            logger.exception("humanizer_inference_failed", model=self.model_name)
             return None
 
     @staticmethod
@@ -231,8 +255,8 @@ class HumanizerService:
             normalized = " ".join(tokens[: self.max_input_tokens])
 
         input_metrics = compute_metrics(normalized)
-        mode = "huggingface_api"
-        rewritten = self._api_rewrite(normalized, style, strength, preserve_terms)
+        mode = "huggingface_local"
+        rewritten = self._model_rewrite(normalized, style, strength, preserve_terms)
         if rewritten is None:
             if self.settings.humanizer_require_model:
                 reason = self._last_model_error or "unknown"
