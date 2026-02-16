@@ -26,6 +26,8 @@ export type HumanizeResponse = {
   };
   readability_delta: number;
   quality_flags: string[];
+  humanizer_mode: string;
+  humanizer_model: string;
   latency_ms: number;
 };
 
