@@ -7,9 +7,19 @@
 **/__pycache__/
 **/.pytest_cache/
 **/.mypy_cache/
+**/.ruff_cache/
 **/*.pyc
 **/*.pyo
 **/*.pyd
+**/.venv/
+**/venv/
+.venv
+.cache
+.tox
+.coverage
+coverage
+dist
+build
 
 node_modules
 **/node_modules
@@ -17,6 +27,10 @@ apps/web/.next
 apps/web/out
 
 services/trainer/artifacts
+services/trainer/.venv
+services/trainer
+services/artifacts
 train_data
+legacy
 
 *.log
