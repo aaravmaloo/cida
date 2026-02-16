@@ -22,8 +22,6 @@ coverage/
 *.onnx
 *.pt
 *.bin
-services/trainer/artifacts/
-!services/artifacts/artifacts_latest/model.onnx
 services/api/.pytest_cache/
 services/api/.mypy_cache/
 
