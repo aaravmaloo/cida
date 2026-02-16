@@ -22,11 +22,19 @@ logger = get_logger(__name__)
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _SPACE_RE = re.compile(r"\s+")
+_HUMANEYES_MODEL_ID = "Eemansleepdeprived/Humaneyes"
 
 
 class HumanizerService:
     def __init__(self, max_input_tokens: int | None = None) -> None:
         self.settings = get_settings()
+        self.model_name = _HUMANEYES_MODEL_ID
+        if self.settings.humanizer_model_name and self.settings.humanizer_model_name != _HUMANEYES_MODEL_ID:
+            logger.warning(
+                "humanizer_model_forced_to_humaneyes",
+                configured=self.settings.humanizer_model_name,
+                forced=_HUMANEYES_MODEL_ID,
+            )
         self.max_input_tokens = max_input_tokens or self.settings.humanizer_max_input_tokens
         self.max_new_tokens = self.settings.humanizer_max_new_tokens
         self._tokenizer = None
@@ -45,22 +53,22 @@ class HumanizerService:
             return None
         try:
             self._tokenizer = AutoTokenizer.from_pretrained(
-                self.settings.humanizer_model_name,
+                self.model_name,
                 local_files_only=not self.settings.humanizer_allow_remote_download,
             )
             self._model = AutoModelForSeq2SeqLM.from_pretrained(
-                self.settings.humanizer_model_name,
+                self.model_name,
                 local_files_only=not self.settings.humanizer_allow_remote_download,
             )
             self._model.to(self._device)
             self._model.eval()
-            logger.info("humanizer_model_loaded", model=self.settings.humanizer_model_name, device=self._device)
+            logger.info("humanizer_model_loaded", model=self.model_name, device=self._device)
             return self._tokenizer, self._model
         except Exception:
             self._model_unavailable = True
             self._tokenizer = None
             self._model = None
-            logger.exception("humanizer_model_load_failed", model=self.settings.humanizer_model_name)
+            logger.exception("humanizer_model_load_failed", model=self.model_name)
             return None
 
     @staticmethod
@@ -109,7 +117,7 @@ class HumanizerService:
             rewritten = _SPACE_RE.sub(" ", rewritten).strip()
             return rewritten or None
         except Exception:
-            logger.exception("humanizer_inference_failed", model=self.settings.humanizer_model_name)
+            logger.exception("humanizer_inference_failed", model=self.model_name)
             return None
 
     @staticmethod
@@ -193,11 +201,13 @@ class HumanizerService:
             normalized = " ".join(tokens[: self.max_input_tokens])
 
         input_metrics = compute_metrics(normalized)
+        mode = "huggingface"
         rewritten = self._model_rewrite(normalized, preserve_terms)
         if rewritten is None:
+            if self.settings.humanizer_require_model:
+                raise RuntimeError(f"Required humanizer model unavailable: {self.model_name}")
+            mode = "fallback"
             rewritten = self._fallback_rewrite(normalized, style, strength, preserve_terms)
-        elif style != "natural" or strength > 1:
-            rewritten = self._fallback_rewrite(rewritten, style, strength, preserve_terms)
 
         output_metrics = compute_metrics(rewritten)
 
@@ -214,6 +224,8 @@ class HumanizerService:
             quality_flags.append("over_compression")
         if ratio > 0.95:
             quality_flags.append("minimal_change")
+        if mode == "fallback":
+            quality_flags.append("fallback_mode")
 
         return {
             "rewritten_text": rewritten,
@@ -229,6 +241,8 @@ class HumanizerService:
             "latency_ms": round(latency_ms, 3),
             "input_word_count": input_metrics.word_count,
             "output_word_count": output_metrics.word_count,
+            "humanizer_mode": mode,
+            "humanizer_model": self.model_name,
         }
 
 
