@@ -36,12 +36,15 @@ async def humanize_content(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Turnstile validation failed")
 
     start = time.perf_counter()
-    result = humanizer_service.rewrite(
-        text=body.text,
-        style=body.style,
-        strength=body.strength,
-        preserve_terms=body.preserve_terms,
-    )
+    try:
+        result = humanizer_service.rewrite(
+            text=body.text,
+            style=body.style,
+            strength=body.strength,
+            preserve_terms=body.preserve_terms,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     latency_ms = round((time.perf_counter() - start) * 1000, 3)
     humanize_id = uuid.uuid4().hex
 
