@@ -16,19 +16,15 @@ logger = get_logger(__name__)
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _SPACE_RE = re.compile(r"\s+")
-_HUMANEYES_MODEL_ID = "Eemansleepdeprived/Humaneyes"
+_DEFAULT_HUMANIZER_MODEL_ID = "google/flan-t5-small"
+_LEGACY_HF_API_PREFIX = "https://api-inference.huggingface.co/models/"
 
 
 class HumanizerService:
     def __init__(self, max_input_tokens: int | None = None) -> None:
         self.settings = get_settings()
-        self.model_name = _HUMANEYES_MODEL_ID
-        if self.settings.humanizer_model_name and self.settings.humanizer_model_name != _HUMANEYES_MODEL_ID:
-            logger.warning(
-                "humanizer_model_forced_to_humaneyes",
-                configured=self.settings.humanizer_model_name,
-                forced=_HUMANEYES_MODEL_ID,
-            )
+        configured = (self.settings.humanizer_model_name or "").strip()
+        self.model_name = configured or _DEFAULT_HUMANIZER_MODEL_ID
         self.max_input_tokens = max_input_tokens or self.settings.humanizer_max_input_tokens
         self.max_new_tokens = self.settings.humanizer_max_new_tokens
         self._last_model_error = ""
@@ -50,7 +46,28 @@ class HumanizerService:
             out = out.replace(key, term)
         return out
 
-    def _api_rewrite(self, text: str, preserve_terms: list[str]) -> str | None:
+    def _resolve_endpoint(self) -> str:
+        custom = self.settings.humanizer_api_url.strip()
+        base_url = self.settings.hf_router_base_url.rstrip("/")
+        if custom:
+            if custom.startswith(_LEGACY_HF_API_PREFIX):
+                model_id = custom[len(_LEGACY_HF_API_PREFIX) :].strip("/")
+                return f"{base_url}/hf-inference/models/{quote(model_id, safe='')}"
+            return custom
+
+        return f"{base_url}/hf-inference/models/{quote(self.model_name, safe='')}"
+
+    @staticmethod
+    def _build_prompt(*, text: str, style: str, strength: int, preserve_terms: list[str]) -> str:
+        preserve = ", ".join(t for t in preserve_terms if t.strip()) or "none"
+        return (
+            "Rewrite this to sound natural and human while preserving the original meaning. "
+            f"Target style: {style}. Rewrite strength: {strength}/3. "
+            f"Preserve these terms exactly: {preserve}.\n\n"
+            f"Text:\n{text}"
+        )
+
+    def _api_rewrite(self, text: str, style: str, strength: int, preserve_terms: list[str]) -> str | None:
         if not self.settings.humanizer_use_remote_api:
             self._last_model_error = "remote_api_disabled"
             return None
@@ -61,14 +78,10 @@ class HumanizerService:
             return None
 
         protected, mapping = self._protect_terms(text, preserve_terms)
-        if self.settings.humanizer_api_url.strip():
-            endpoint = self.settings.humanizer_api_url.strip()
-        else:
-            base_url = self.settings.hf_router_base_url.rstrip("/")
-            encoded_model = quote(self.model_name, safe="")
-            endpoint = f"{base_url}/hf-inference/models/{encoded_model}"
+        endpoint = self._resolve_endpoint()
+        prompt = self._build_prompt(text=protected, style=style, strength=strength, preserve_terms=preserve_terms)
         payload = {
-            "inputs": protected,
+            "inputs": prompt,
             "parameters": {"max_new_tokens": self.max_new_tokens, "return_full_text": False},
             "options": {"wait_for_model": True},
         }
@@ -84,8 +97,8 @@ class HumanizerService:
                 detail = response.text.strip().replace("\n", " ")
                 if response.status_code == 404 and not self.settings.humanizer_api_url.strip():
                     self._last_model_error = (
-                        "api_http_404:model_not_available_via_router; "
-                        "set HUMANIZER_API_URL to a dedicated HF endpoint for this model"
+                        f"api_http_404:model_not_available_via_router:{self.model_name}; "
+                        "try HUMANIZER_MODEL_NAME=google/flan-t5-small or set HUMANIZER_API_URL"
                     )
                 else:
                     self._last_model_error = f"api_http_{response.status_code}:{detail[:220]}"
@@ -210,7 +223,7 @@ class HumanizerService:
 
         input_metrics = compute_metrics(normalized)
         mode = "huggingface_api"
-        rewritten = self._api_rewrite(normalized, preserve_terms)
+        rewritten = self._api_rewrite(normalized, style, strength, preserve_terms)
         if rewritten is None:
             if self.settings.humanizer_require_model:
                 reason = self._last_model_error or "unknown"
