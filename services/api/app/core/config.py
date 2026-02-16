@@ -50,15 +50,10 @@ class Settings(BaseSettings):
     release_detector_for_humanizer: bool = Field(default=True, alias="RELEASE_DETECTOR_FOR_HUMANIZER")
 
     humanizer_model_name: str = Field(default="google/flan-t5-small", alias="HUMANIZER_MODEL_NAME")
-    humanizer_use_remote_api: bool = Field(default=True, alias="HUMANIZER_USE_REMOTE_API")
     humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
     humanizer_require_model: bool = Field(default=True, alias="HUMANIZER_REQUIRE_MODEL")
-    humanizer_api_timeout_seconds: float = Field(default=60.0, alias="HUMANIZER_API_TIMEOUT_SECONDS")
-    humanizer_api_url: str = Field(default="", alias="HUMANIZER_API_URL")
     humanizer_temperature: float = Field(default=0.7, alias="HUMANIZER_TEMPERATURE")
     humanizer_top_p: float = Field(default=0.9, alias="HUMANIZER_TOP_P")
-    hf_token: str = Field(default="", alias="HF_TOKEN")
-    hf_router_base_url: str = Field(default="https://router.huggingface.co", alias="HF_ROUTER_BASE_URL")
     humanizer_max_input_tokens: int = Field(default=512, alias="HUMANIZER_MAX_INPUT_TOKENS")
     humanizer_max_new_tokens: int = Field(default=256, alias="HUMANIZER_MAX_NEW_TOKENS")
 
