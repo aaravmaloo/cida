@@ -6,12 +6,14 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.rate_limit import enforce_sliding_window
 from app.core.redis import get_redis
 from app.db.session import get_db
 from app.models.entities import HumanizeEvent
 from app.schemas.humanize import HumanizeRequest, HumanizeResponse
 from app.services.humanizer import humanizer_service
+from app.services.inference import detector_service
 from app.services.turnstile import verify_turnstile
 from app.utils.hashing import sha256_text
 from app.utils.http import client_ip
@@ -25,6 +27,7 @@ async def humanize_content(
     body: HumanizeRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    settings = get_settings()
     redis = await get_redis()
     ip = client_ip(request)
     rl = await enforce_sliding_window(redis, key=f"rl:humanize:{ip}", limit=6, window_seconds=60)
@@ -34,6 +37,9 @@ async def humanize_content(
     turnstile_token = request.headers.get("x-turnstile-token")
     if not await verify_turnstile(turnstile_token, ip):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Turnstile validation failed")
+
+    if settings.release_detector_for_humanizer:
+        detector_service.release_model()
 
     start = time.perf_counter()
     try:
