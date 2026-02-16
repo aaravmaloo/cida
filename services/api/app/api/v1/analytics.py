@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +12,20 @@ from app.schemas.analytics import AnalyticsSummaryResponse
 router = APIRouter()
 
 
+def _percentile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return float(values[0])
+
+    sorted_values = sorted(float(v) for v in values)
+    position = (len(sorted_values) - 1) * (q / 100.0)
+    lower = int(position)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    weight = position - lower
+    return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
+
+
 @router.get("/analytics/summary", response_model=AnalyticsSummaryResponse)
 async def analytics_summary(
     _admin=Depends(require_admin),
@@ -23,7 +36,7 @@ async def analytics_summary(
     avg_ai_probability = float((await db.scalar(select(func.avg(AnalysisEvent.ai_probability)))) or 0.0)
 
     latencies = (await db.scalars(select(AnalysisEvent.latency_ms))).all()
-    p95_latency = float(np.percentile(latencies, 95)) if latencies else 0.0
+    p95_latency = _percentile([float(x) for x in latencies], 95.0) if latencies else 0.0
 
     rows = (
         await db.execute(
