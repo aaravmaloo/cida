@@ -44,6 +44,21 @@ class HumanizerService:
         self._last_model_error = ""
         self._device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
 
+    def _resolve_torch_dtype(self):
+        if torch is None:
+            return None
+
+        value = (self.settings.humanizer_torch_dtype or "float16").strip().lower()
+        mapping = {
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+            "float32": torch.float32,
+            "fp32": torch.float32,
+        }
+        return mapping.get(value, torch.float16)
+
     def _resolve_input_cap(self, tokenizer, model) -> int:
         candidates: list[int] = []
 
@@ -80,6 +95,10 @@ class HumanizerService:
                 model_kwargs["low_cpu_mem_usage"] = True
             except Exception:
                 pass
+
+            dtype = self._resolve_torch_dtype()
+            if dtype is not None:
+                model_kwargs["torch_dtype"] = dtype
 
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
@@ -142,7 +161,7 @@ class HumanizerService:
                 generated = model.generate(
                     **encoded,
                     max_new_tokens=max_new_tokens,
-                    num_beams=4,
+                    num_beams=max(1, int(self.settings.humanizer_num_beams)),
                     no_repeat_ngram_size=3,
                     early_stopping=True,
                 )
