@@ -89,6 +89,8 @@ Model/runtime:
 - `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
 - `HUMANIZER_API_TIMEOUT_SECONDS` (default `60`)
 - `HUMANIZER_API_URL` (optional direct endpoint URL; overrides router path)
+- `HUMANIZER_TEMPERATURE` (default `0.7`)
+- `HUMANIZER_TOP_P` (default `0.9`)
 - `HF_TOKEN` (required when `HUMANIZER_USE_REMOTE_API=true`)
 - `HF_ROUTER_BASE_URL` (default `https://router.huggingface.co`)
 - `HUMANIZER_MAX_INPUT_TOKENS` (upper bound; runtime also clamps to model context window)
