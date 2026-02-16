@@ -38,12 +38,19 @@ class Settings(BaseSettings):
     )
     cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
-    model_version: str = Field(default="deberta-v3-large-v2", alias="MODEL_VERSION")
-    detector_model_name: str = Field(default="microsoft/deberta-v3-large", alias="DETECTOR_MODEL_NAME")
-    detector_onnx_path: str = Field(default="/app/runtime_bundle/model.onnx", alias="DETECTOR_ONNX_PATH")
-    detector_tokenizer_path: str = Field(default="/app/runtime_bundle/model", alias="DETECTOR_TOKENIZER_PATH")
-    detector_allow_remote_download: bool = Field(default=False, alias="DETECTOR_ALLOW_REMOTE_DOWNLOAD")
-    calibration_path: str = Field(default="/app/runtime_bundle/calibration.json", alias="CALIBRATION_PATH")
+    model_version: str = Field(default="hf-shahxeebhassan-bert-base-ai-content-detector", alias="MODEL_VERSION")
+    detector_model_name: str = Field(
+        default="shahxeebhassan/bert_base_ai_content_detector",
+        alias="DETECTOR_MODEL_NAME",
+    )
+    detector_allow_remote_download: bool = Field(default=True, alias="DETECTOR_ALLOW_REMOTE_DOWNLOAD")
+    detector_ai_label: int = Field(default=1, alias="DETECTOR_AI_LABEL")
+    detector_max_length: int = Field(default=512, alias="DETECTOR_MAX_LENGTH")
+
+    humanizer_model_name: str = Field(default="Eemansleepdeprived/Humaneyes", alias="HUMANIZER_MODEL_NAME")
+    humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
+    humanizer_max_input_tokens: int = Field(default=512, alias="HUMANIZER_MAX_INPUT_TOKENS")
+    humanizer_max_new_tokens: int = Field(default=256, alias="HUMANIZER_MAX_NEW_TOKENS")
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
