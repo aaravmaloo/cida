@@ -19,5 +19,7 @@ class HumanizeResponse(BaseModel):
     diff_stats: DiffStats
     readability_delta: float
     quality_flags: list[str]
+    humanizer_mode: str
+    humanizer_model: str
     latency_ms: float
 
