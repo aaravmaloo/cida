@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
     humanizer_require_model: bool = Field(default=True, alias="HUMANIZER_REQUIRE_MODEL")
     humanizer_api_timeout_seconds: float = Field(default=60.0, alias="HUMANIZER_API_TIMEOUT_SECONDS")
+    humanizer_api_url: str = Field(default="", alias="HUMANIZER_API_URL")
     hf_token: str = Field(default="", alias="HF_TOKEN")
     hf_router_base_url: str = Field(default="https://router.huggingface.co", alias="HF_ROUTER_BASE_URL")
     humanizer_max_input_tokens: int = Field(default=512, alias="HUMANIZER_MAX_INPUT_TOKENS")
