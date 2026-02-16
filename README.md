@@ -83,6 +83,7 @@ Model/runtime:
 - `DETECTOR_MAX_LENGTH`
 - `HUMANIZER_MODEL_NAME` (default `Eemansleepdeprived/Humaneyes`)
 - `HUMANIZER_ALLOW_REMOTE_DOWNLOAD`
+- `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
 - `HUMANIZER_MAX_INPUT_TOKENS`
 - `HUMANIZER_MAX_NEW_TOKENS`
 
