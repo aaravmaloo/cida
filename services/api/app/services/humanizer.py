@@ -37,10 +37,31 @@ class HumanizerService:
             )
         self.max_input_tokens = max_input_tokens or self.settings.humanizer_max_input_tokens
         self.max_new_tokens = self.settings.humanizer_max_new_tokens
+        self._effective_input_cap = self.max_input_tokens
         self._tokenizer = None
         self._model = None
         self._model_unavailable = False
+        self._last_model_error = ""
         self._device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
+
+    def _resolve_input_cap(self, tokenizer, model) -> int:
+        candidates: list[int] = []
+
+        tokenizer_max_len = getattr(tokenizer, "model_max_length", None)
+        if isinstance(tokenizer_max_len, int) and 0 < tokenizer_max_len < 100_000:
+            candidates.append(tokenizer_max_len)
+
+        config = getattr(model, "config", None)
+        if config is not None:
+            for attr in ("max_position_embeddings", "max_source_positions", "n_positions"):
+                value = getattr(config, attr, None)
+                if isinstance(value, int) and value > 0:
+                    candidates.append(value)
+
+        if not candidates:
+            return int(self.max_input_tokens)
+
+        return int(max(8, min(self.max_input_tokens, min(candidates))))
 
     def _get_model(self):
         if self._tokenizer is not None and self._model is not None:
@@ -62,12 +83,15 @@ class HumanizerService:
             )
             self._model.to(self._device)
             self._model.eval()
+            self._effective_input_cap = self._resolve_input_cap(self._tokenizer, self._model)
+            self._last_model_error = ""
             logger.info("humanizer_model_loaded", model=self.model_name, device=self._device)
             return self._tokenizer, self._model
         except Exception:
             self._model_unavailable = True
             self._tokenizer = None
             self._model = None
+            self._last_model_error = "model_load_failed"
             logger.exception("humanizer_model_load_failed", model=self.model_name)
             return None
 
@@ -98,7 +122,7 @@ class HumanizerService:
         try:
             encoded = tokenizer(
                 protected,
-                max_length=self.max_input_tokens,
+                max_length=self._effective_input_cap,
                 truncation=True,
                 return_tensors="pt",
             )
@@ -116,7 +140,8 @@ class HumanizerService:
             rewritten = self._restore_terms(rewritten, mapping)
             rewritten = _SPACE_RE.sub(" ", rewritten).strip()
             return rewritten or None
-        except Exception:
+        except Exception as exc:
+            self._last_model_error = f"inference_failed:{type(exc).__name__}"
             logger.exception("humanizer_inference_failed", model=self.model_name)
             return None
 
@@ -205,7 +230,8 @@ class HumanizerService:
         rewritten = self._model_rewrite(normalized, preserve_terms)
         if rewritten is None:
             if self.settings.humanizer_require_model:
-                raise RuntimeError(f"Required humanizer model unavailable: {self.model_name}")
+                reason = self._last_model_error or "unknown"
+                raise RuntimeError(f"Required humanizer model unavailable: {self.model_name} ({reason})")
             mode = "fallback"
             rewritten = self._fallback_rewrite(normalized, style, strength, preserve_terms)
 
