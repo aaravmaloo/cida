@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     detector_allow_remote_download: bool = Field(default=True, alias="DETECTOR_ALLOW_REMOTE_DOWNLOAD")
     detector_ai_label: int = Field(default=1, alias="DETECTOR_AI_LABEL")
     detector_max_length: int = Field(default=512, alias="DETECTOR_MAX_LENGTH")
+    detector_eager_load: bool = Field(default=False, alias="DETECTOR_EAGER_LOAD")
+    release_detector_for_humanizer: bool = Field(default=True, alias="RELEASE_DETECTOR_FOR_HUMANIZER")
 
     humanizer_model_name: str = Field(default="Eemansleepdeprived/Humaneyes", alias="HUMANIZER_MODEL_NAME")
     humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
