@@ -18,6 +18,7 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _SPACE_RE = re.compile(r"\s+")
 _DEFAULT_HUMANIZER_MODEL_ID = "google/flan-t5-small"
 _LEGACY_HF_API_PREFIX = "https://api-inference.huggingface.co/models/"
+_LEGACY_HF_TASK_PREFIX = "https://api-inference.huggingface.co/v1/text2text-generation/"
 
 
 class HumanizerService:
@@ -53,9 +54,12 @@ class HumanizerService:
             if custom.startswith(_LEGACY_HF_API_PREFIX):
                 model_id = custom[len(_LEGACY_HF_API_PREFIX) :].strip("/")
                 return f"{base_url}/hf-inference/models/{quote(model_id, safe='')}"
+            if custom.startswith(_LEGACY_HF_TASK_PREFIX):
+                model_id = custom[len(_LEGACY_HF_TASK_PREFIX) :].strip("/")
+                return f"{base_url}/v1/text2text-generation/{quote(model_id, safe='')}"
             return custom
 
-        return f"{base_url}/hf-inference/models/{quote(self.model_name, safe='')}"
+        return f"{base_url}/v1/text2text-generation/{quote(self.model_name, safe='')}"
 
     @staticmethod
     def _build_prompt(*, text: str, style: str, strength: int, preserve_terms: list[str]) -> str:
@@ -82,7 +86,12 @@ class HumanizerService:
         prompt = self._build_prompt(text=protected, style=style, strength=strength, preserve_terms=preserve_terms)
         payload = {
             "inputs": prompt,
-            "parameters": {"max_new_tokens": self.max_new_tokens, "return_full_text": False},
+            "parameters": {
+                "max_new_tokens": self.max_new_tokens,
+                "temperature": float(self.settings.humanizer_temperature),
+                "top_p": float(self.settings.humanizer_top_p),
+                "return_full_text": False,
+            },
             "options": {"wait_for_model": True},
         }
         headers = {
