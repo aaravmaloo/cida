@@ -18,6 +18,7 @@ from app.services.turnstile import verify_turnstile
 from app.utils.files import extract_text_from_upload
 from app.utils.hashing import sha256_text
 from app.utils.http import client_ip
+from app.utils.request_body import read_json_body
 from app.utils.text import normalize_text
 
 router = APIRouter()
@@ -49,7 +50,7 @@ async def analyze_content(
 
     content_type = (request.headers.get("content-type") or "").lower()
     if "application/json" in content_type:
-        payload = await request.json()
+        payload = await read_json_body(request)
         text = payload.get("text")
         source = payload.get("source", "paste")
     elif "multipart/form-data" in content_type:
