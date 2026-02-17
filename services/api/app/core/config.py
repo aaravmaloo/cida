@@ -51,7 +51,6 @@ class Settings(BaseSettings):
         alias="HF_SPACE_MODEL_VERSION",
     )
 
-    cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
 
     r2_endpoint: str = Field(default="", alias="R2_ENDPOINT")
