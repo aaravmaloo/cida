@@ -6,20 +6,16 @@ CIDA is an AI text platform with a core capability focused on:
 
 It also includes admin analytics, async report generation, rate limiting, and Turnstile verification.
 
-## Model Stack (Hugging Face)
+## Model Stack (Groq)
 
-CIDA now uses open-source Hugging Face models directly at runtime.
+CIDA now runs detector scoring through Groq-hosted LLM inference.
 
 ### Detector
 
-- Model: `shahxeebhassan/bert_base_ai_content_detector`
-- URL: https://huggingface.co/shahxeebhassan/bert_base_ai_content_detector
-- Task: text classification (human vs AI)
-- Base: `bert-base-uncased`
-- License: MIT
-- Label mapping in source dataset (`shahxeebhassan/human_vs_ai_sentences`):
-  - `0` = human-written
-  - `1` = AI-generated
+- Model: `openai/gpt-oss-120b`
+- Provider: Groq
+- Task: AI-likelihood scoring (returns `ai_probability` in `[0, 1]`)
+- Runtime: API calls Groq chat completions; if unavailable, service falls back to local heuristic scoring.
 
 ## What the System Does
 
@@ -33,7 +29,7 @@ CIDA now uses open-source Hugging Face models directly at runtime.
 4. Report jobs are queued in Redis.
 5. `services/worker` renders and stores JSON/PDF reports.
 
-If Hugging Face model loading fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
+If Groq is unavailable or response parsing fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
 
 ## Repository Layout
 
@@ -66,12 +62,13 @@ Required:
 
 Model/runtime:
 
-- `MODEL_VERSION`
-- `DETECTOR_MODEL_NAME` (default `shahxeebhassan/bert_base_ai_content_detector`)
-- `DETECTOR_ALLOW_REMOTE_DOWNLOAD` (`true` to pull from HF when not cached)
-- `DETECTOR_AI_LABEL` (default `1`)
-- `DETECTOR_MAX_LENGTH`
-- `DETECTOR_EAGER_LOAD` (default `false`; lazy-load detector to reduce startup RAM)
+- `GROQ_API_KEY`
+- `GROQ_MODEL` (default `openai/gpt-oss-120b`)
+- `GROQ_TEMPERATURE` (default `1`)
+- `GROQ_TOP_P` (default `1`)
+- `GROQ_MAX_COMPLETION_TOKENS` (default `8192`)
+- `GROQ_REASONING_EFFORT` (default `medium`)
+- `GROQ_MAX_INPUT_CHARS` (default `12000`)
 
 Optional:
 
@@ -154,8 +151,8 @@ npm run dev:web
 ## Deployment Notes
 
 - API Docker image no longer expects ONNX artifacts.
-- Models are loaded using `transformers` + `torch` from Hugging Face model IDs.
-- First startup may download models if not cached.
+- Detector scoring is done via Groq API calls.
+- Configure `GROQ_API_KEY` in deployment secrets.
 
 ## Health Checks
 
@@ -166,10 +163,8 @@ curl -i https://<api-domain>/readyz
 
 ## Credits
 
-- Detector model by **shahxeebhassan**:
-  - https://huggingface.co/shahxeebhassan/bert_base_ai_content_detector
-- Detector dataset by **shahxeebhassan**:
-  - https://huggingface.co/datasets/shahxeebhassan/human_vs_ai_sentences
+- Detector inference provider: **Groq**
+- Detector model: **OpenAI `openai/gpt-oss-120b`**
 
 ## Security and Responsible Use
 
