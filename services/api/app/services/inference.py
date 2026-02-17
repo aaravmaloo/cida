@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
 import re
 from typing import Any
-
-import httpx
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -14,37 +13,37 @@ from app.utils.text import clamp, normalize_text
 
 logger = get_logger(__name__)
 
+try:
+    from groq import Groq
+except Exception:  # pragma: no cover
+    Groq = None
+
+
+_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_PROBABILITY_RE = re.compile(r"ai[_\s-]*probability[^0-9-]*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_LABEL_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
 
 
 class DetectorService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client: httpx.Client | None = None
-        self.inference_url = f"{self.settings.hf_inference_base_url}/{self.settings.hf_model}"
+        self.client = None
         self.using_model = False
-        if not self.settings.hf_token:
-            logger.warning("detector_hf_token_missing")
+        if Groq is None:
+            logger.warning("detector_groq_sdk_unavailable")
+            return
+        if not self.settings.groq_api_key:
+            logger.warning("detector_groq_api_key_missing")
             return
         try:
-            self.client = httpx.Client(
-                timeout=httpx.Timeout(self.settings.hf_timeout_seconds),
-                headers={
-                    "Authorization": f"Bearer {self.settings.hf_token}",
-                    "Accept": "application/json",
-                },
-            )
-            logger.info("detector_hf_client_ready", model=self.settings.hf_model)
+            self.client = Groq(api_key=self.settings.groq_api_key)
+            logger.info("detector_groq_client_ready", model=self.settings.groq_model)
         except Exception:
-            logger.exception("detector_hf_client_init_failed", model=self.settings.hf_model)
+            logger.exception("detector_groq_client_init_failed", model=self.settings.groq_model)
             self.client = None
 
     def release_model(self) -> None:
-        # Detector inference is remote via Hugging Face.
-        if self.client is not None:
-            self.client.close()
-            self.client = None
+        # Detector inference is remote via Groq; nothing to unload locally.
         gc.collect()
         logger.info("detector_model_release_noop")
 
@@ -71,136 +70,102 @@ class DetectorService:
         return float(clamp(numeric, 0.0, 1.0))
 
     @staticmethod
-    def _normalize_label(value: str) -> str:
-        return _LABEL_NORMALIZE_RE.sub("_", value.strip().lower()).strip("_")
-
-    @staticmethod
-    def _collect_label_scores(payload: Any) -> dict[str, float]:
-        scores: dict[str, float] = {}
-        stack: list[Any] = [payload]
-
-        while stack:
-            current = stack.pop()
-            if isinstance(current, list):
-                stack.extend(current)
-                continue
-
-            if not isinstance(current, dict):
-                continue
-
-            label = current.get("label")
-            score = DetectorService._coerce_probability(current.get("score"))
-            if isinstance(label, str) and score is not None:
-                normalized_label = DetectorService._normalize_label(label)
-                existing = scores.get(normalized_label, 0.0)
-                scores[normalized_label] = max(existing, score)
-
-            labels = current.get("labels")
-            raw_scores = current.get("scores")
-            if isinstance(labels, list) and isinstance(raw_scores, list):
-                for raw_label, raw_score in zip(labels, raw_scores):
-                    if not isinstance(raw_label, str):
-                        continue
-                    coerced = DetectorService._coerce_probability(raw_score)
-                    if coerced is None:
-                        continue
-                    normalized_label = DetectorService._normalize_label(raw_label)
-                    existing = scores.get(normalized_label, 0.0)
-                    scores[normalized_label] = max(existing, coerced)
-
-            for value in current.values():
-                if isinstance(value, (list, dict)):
-                    stack.append(value)
-
-        return scores
-
-    @staticmethod
-    def _resolve_hf_probability(payload: Any) -> float | None:
-        direct = DetectorService._coerce_probability(payload)
-        if direct is not None:
-            return direct
-
-        if isinstance(payload, dict):
-            for key in ("ai_probability", "probability", "score"):
-                direct = DetectorService._coerce_probability(payload.get(key))
-                if direct is not None:
-                    return direct
-
-        labels = DetectorService._collect_label_scores(payload)
-        if not labels:
+    def _extract_probability(raw: str) -> float | None:
+        candidate = (raw or "").strip()
+        if not candidate:
             return None
 
-        negative_ai_tokens = ("not_ai", "non_ai", "no_ai")
-        human_tokens = ("human", "real", "original", "authentic")
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```(?:json)?\s*", "", candidate, flags=re.IGNORECASE)
+            candidate = re.sub(r"\s*```$", "", candidate)
 
-        for label, score in labels.items():
-            if any(token in label for token in negative_ai_tokens):
-                return float(clamp(1.0 - score, 0.0, 1.0))
+        objects: list[str] = [candidate]
+        match_obj = _OBJECT_RE.search(candidate)
+        if match_obj:
+            objects.append(match_obj.group(0))
 
-        for label, score in labels.items():
-            if any(token in label for token in human_tokens):
-                return float(clamp(1.0 - score, 0.0, 1.0))
+        for obj in objects:
+            try:
+                payload = json.loads(obj)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                for key in ("ai_probability", "probability", "score"):
+                    value = payload.get(key)
+                    coerced = DetectorService._coerce_probability(value)
+                    if coerced is not None:
+                        return coerced
 
-        ai_tokens = ("ai", "generated", "machine", "synthetic", "llm", "bot")
-        for label, score in labels.items():
-            if any(token in label for token in ai_tokens):
-                return score
+        match_prob = _PROBABILITY_RE.search(candidate)
+        if match_prob:
+            return DetectorService._coerce_probability(match_prob.group(1))
 
-        if "label_1" in labels:
-            return labels["label_1"]
-        if "class_1" in labels:
-            return labels["class_1"]
+        return DetectorService._coerce_probability(candidate)
 
-        if len(labels) == 1:
-            return next(iter(labels.values()))
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                else:
+                    text = getattr(item, "text", None) or getattr(item, "content", None)
+                if isinstance(text, str):
+                    parts.append(text)
+            return "".join(parts)
+        return str(content or "")
 
-        if "label_0" in labels and len(labels) == 2:
-            return float(clamp(1.0 - labels["label_0"], 0.0, 1.0))
-
-        return None
-
-    def _hf_probability(self, text: str) -> float | None:
+    def _groq_probability(self, text: str) -> float | None:
         if self.client is None:
             return None
 
-        truncated = text[: max(200, self.settings.hf_max_input_chars)]
-        request_payload = {
-            "inputs": truncated,
-            "parameters": {
-                "function_to_apply": "sigmoid",
-                "top_k": 2,
-            },
-            "options": {"wait_for_model": True},
+        truncated = text[: max(200, self.settings.groq_max_input_chars)]
+        system_prompt = (
+            "You score whether text is AI-generated. "
+            "Return only JSON: {\"ai_probability\": <float between 0 and 1>}."
+        )
+        user_prompt = f"Analyze this text:\n\n{truncated}"
+        request_kwargs = {
+            "model": self.settings.groq_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": self.settings.groq_temperature,
+            "max_completion_tokens": self.settings.groq_max_completion_tokens,
+            "top_p": self.settings.groq_top_p,
+            "reasoning_effort": self.settings.groq_reasoning_effort,
+            "stream": False,
         }
 
         try:
-            response = self.client.post(self.inference_url, json=request_payload)
+            completion = self.client.chat.completions.create(**request_kwargs)
+        except TypeError:
+            request_kwargs.pop("reasoning_effort", None)
+            try:
+                completion = self.client.chat.completions.create(**request_kwargs)
+            except Exception:
+                logger.exception("detector_groq_inference_failed", model=self.settings.groq_model)
+                return None
         except Exception:
-            logger.exception("detector_hf_inference_failed", model=self.settings.hf_model)
+            logger.exception("detector_groq_inference_failed", model=self.settings.groq_model)
             return None
 
-        if response.status_code >= 400:
-            logger.warning(
-                "detector_hf_inference_http_error",
-                model=self.settings.hf_model,
-                status_code=response.status_code,
-                preview=response.text[:180],
-            )
-            return None
+        content = ""
+        if getattr(completion, "choices", None):
+            first_choice = completion.choices[0]
+            message = getattr(first_choice, "message", None)
+            content = self._content_to_text(getattr(message, "content", ""))
 
-        try:
-            payload = response.json()
-        except ValueError:
-            logger.warning("detector_hf_unparseable_response", preview=response.text[:180])
-            return None
-
-        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
-            logger.warning("detector_hf_inference_error", preview=payload["error"][:180])
-            return None
-
-        probability = self._resolve_hf_probability(payload)
+        probability = self._extract_probability(content)
         if probability is None:
-            logger.warning("detector_hf_unparseable_response", preview=str(payload)[:180])
+            logger.warning("detector_groq_unparseable_response", preview=content[:180])
         return probability
 
     def _heuristic_logit(self, text: str) -> float:
@@ -218,7 +183,7 @@ class DetectorService:
         return float(clamp(logit, -6.0, 6.0))
 
     def _model_probability(self, text: str) -> float:
-        probability = self._hf_probability(text)
+        probability = self._groq_probability(text)
         if probability is not None:
             self.using_model = True
             return probability
@@ -254,7 +219,7 @@ class DetectorService:
             "vocab_diversity": metrics.vocab_diversity,
             "word_count": metrics.word_count,
             "estimated_read_time": metrics.estimated_read_time,
-            "model_version": self.settings.hf_model,
+            "model_version": self.settings.groq_model,
         }
 
 
