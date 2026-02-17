@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
+import re
+from typing import Any
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -11,96 +14,159 @@ from app.utils.text import clamp, normalize_text
 logger = get_logger(__name__)
 
 try:
-    import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    from groq import Groq
 except Exception:  # pragma: no cover
-    torch = None
-    AutoModelForSequenceClassification = None
-    AutoTokenizer = None
+    Groq = None
+
+
+_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_PROBABILITY_RE = re.compile(r"ai[_\s-]*probability[^0-9-]*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
 
 class DetectorService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.tokenizer = None
-        self.model = None
-        self.device = "cpu"
+        self.client = None
         self.using_model = False
-        self._runtime_initialized = False
-
-        if self.settings.detector_eager_load:
-            self._ensure_runtime_loaded()
-
-    def _resolve_ai_label_index(self, num_labels: int) -> int:
-        if self.model is None or num_labels <= 1:
-            return 0
-
-        config = getattr(self.model, "config", None)
-        if config is not None:
-            label2id = getattr(config, "label2id", None) or {}
-            for label, idx in label2id.items():
-                if "ai" in str(label).lower():
-                    candidate = int(idx)
-                    if 0 <= candidate < num_labels:
-                        return candidate
-
-            id2label = getattr(config, "id2label", None) or {}
-            for idx, label in id2label.items():
-                if "ai" in str(label).lower():
-                    candidate = int(idx)
-                    if 0 <= candidate < num_labels:
-                        return candidate
-
-        configured = int(clamp(self.settings.detector_ai_label, 0, max(0, num_labels - 1)))
-        return configured
-
-    def _load_model_runtime(self) -> None:
-        if torch is None or AutoTokenizer is None or AutoModelForSequenceClassification is None:
-            logger.warning("detector_runtime_unavailable", reason="missing_torch_or_transformers")
+        if Groq is None:
+            logger.warning("detector_groq_sdk_unavailable")
             return
-
+        if not self.settings.groq_api_key:
+            logger.warning("detector_groq_api_key_missing")
+            return
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.settings.detector_model_name,
-                local_files_only=not self.settings.detector_allow_remote_download,
-            )
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                self.settings.detector_model_name,
-                local_files_only=not self.settings.detector_allow_remote_download,
-            )
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.model.to(self.device)
-            self.model.eval()
-            self.using_model = True
-            logger.info("detector_model_loaded", model=self.settings.detector_model_name, device=self.device)
+            self.client = Groq(api_key=self.settings.groq_api_key)
+            logger.info("detector_groq_client_ready", model=self.settings.groq_model)
         except Exception:
-            logger.exception("detector_model_load_failed", model=self.settings.detector_model_name)
-            self.tokenizer = None
-            self.model = None
-            self.using_model = False
-
-        if not self.using_model:
-            logger.warning("detector_using_heuristic_fallback")
-        self._runtime_initialized = True
-
-    def _ensure_runtime_loaded(self) -> None:
-        if self._runtime_initialized:
-            return
-        self._load_model_runtime()
+            logger.exception("detector_groq_client_init_failed", model=self.settings.groq_model)
+            self.client = None
 
     def release_model(self) -> None:
-        self.model = None
-        self.tokenizer = None
-        self.using_model = False
-        self._runtime_initialized = False
-        if torch is not None and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # Detector inference is remote via Groq; nothing to unload locally.
         gc.collect()
-        logger.info("detector_model_released")
+        logger.info("detector_model_release_noop")
 
     @staticmethod
     def _sigmoid(x: float) -> float:
         return 1.0 / (1.0 + math.exp(-x))
+
+    @staticmethod
+    def _coerce_probability(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            numeric = float(value)
+        elif isinstance(value, str):
+            match = _NUMBER_RE.search(value.strip())
+            if not match:
+                return None
+            numeric = float(match.group(0))
+        else:
+            return None
+
+        if numeric > 1.0 and numeric <= 100.0:
+            numeric /= 100.0
+        return float(clamp(numeric, 0.0, 1.0))
+
+    @staticmethod
+    def _extract_probability(raw: str) -> float | None:
+        candidate = (raw or "").strip()
+        if not candidate:
+            return None
+
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```(?:json)?\s*", "", candidate, flags=re.IGNORECASE)
+            candidate = re.sub(r"\s*```$", "", candidate)
+
+        objects: list[str] = [candidate]
+        match_obj = _OBJECT_RE.search(candidate)
+        if match_obj:
+            objects.append(match_obj.group(0))
+
+        for obj in objects:
+            try:
+                payload = json.loads(obj)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                for key in ("ai_probability", "probability", "score"):
+                    value = payload.get(key)
+                    coerced = DetectorService._coerce_probability(value)
+                    if coerced is not None:
+                        return coerced
+
+        match_prob = _PROBABILITY_RE.search(candidate)
+        if match_prob:
+            return DetectorService._coerce_probability(match_prob.group(1))
+
+        return DetectorService._coerce_probability(candidate)
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                else:
+                    text = getattr(item, "text", None) or getattr(item, "content", None)
+                if isinstance(text, str):
+                    parts.append(text)
+            return "".join(parts)
+        return str(content or "")
+
+    def _groq_probability(self, text: str) -> float | None:
+        if self.client is None:
+            return None
+
+        truncated = text[: max(200, self.settings.groq_max_input_chars)]
+        system_prompt = (
+            "You score whether text is AI-generated. "
+            "Return only JSON: {\"ai_probability\": <float between 0 and 1>}."
+        )
+        user_prompt = f"Analyze this text:\n\n{truncated}"
+        request_kwargs = {
+            "model": self.settings.groq_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": self.settings.groq_temperature,
+            "max_completion_tokens": self.settings.groq_max_completion_tokens,
+            "top_p": self.settings.groq_top_p,
+            "reasoning_effort": self.settings.groq_reasoning_effort,
+            "stream": False,
+        }
+
+        try:
+            completion = self.client.chat.completions.create(**request_kwargs)
+        except TypeError:
+            request_kwargs.pop("reasoning_effort", None)
+            try:
+                completion = self.client.chat.completions.create(**request_kwargs)
+            except Exception:
+                logger.exception("detector_groq_inference_failed", model=self.settings.groq_model)
+                return None
+        except Exception:
+            logger.exception("detector_groq_inference_failed", model=self.settings.groq_model)
+            return None
+
+        content = ""
+        if getattr(completion, "choices", None):
+            first_choice = completion.choices[0]
+            message = getattr(first_choice, "message", None)
+            content = self._content_to_text(getattr(message, "content", ""))
+
+        probability = self._extract_probability(content)
+        if probability is None:
+            logger.warning("detector_groq_unparseable_response", preview=content[:180])
+        return probability
 
     def _heuristic_logit(self, text: str) -> float:
         m = compute_metrics(text)
@@ -117,34 +183,13 @@ class DetectorService:
         return float(clamp(logit, -6.0, 6.0))
 
     def _model_probability(self, text: str) -> float:
-        self._ensure_runtime_loaded()
-        if self.model is None or self.tokenizer is None or torch is None:
-            return self._sigmoid(self._heuristic_logit(text))
+        probability = self._groq_probability(text)
+        if probability is not None:
+            self.using_model = True
+            return probability
 
-        try:
-            encoded = self.tokenizer(
-                text,
-                max_length=self.settings.detector_max_length,
-                truncation=True,
-                return_tensors="pt",
-            )
-            encoded = {k: v.to(self.device) for k, v in encoded.items()}
-
-            with torch.no_grad():
-                outputs = self.model(**encoded)
-                logits = outputs.logits
-
-            if logits.ndim == 1 or logits.shape[-1] == 1:
-                prob = float(torch.sigmoid(logits.reshape(-1)[0]).item())
-                return float(clamp(prob, 0.0, 1.0))
-
-            probs = torch.softmax(logits, dim=-1)[0]
-            ai_index = self._resolve_ai_label_index(probs.shape[-1])
-            prob = float(probs[ai_index].item())
-            return float(clamp(prob, 0.0, 1.0))
-        except Exception:
-            logger.exception("detector_inference_failed", model=self.settings.detector_model_name)
-            return self._sigmoid(self._heuristic_logit(text))
+        self.using_model = False
+        return self._sigmoid(self._heuristic_logit(text))
 
     def _confidence_band(self, prob: float) -> str:
         distance = abs(prob - 0.5)
@@ -174,7 +219,7 @@ class DetectorService:
             "vocab_diversity": metrics.vocab_diversity,
             "word_count": metrics.word_count,
             "estimated_read_time": metrics.estimated_read_time,
-            "model_version": self.settings.model_version,
+            "model_version": self.settings.groq_model,
         }
 
 
