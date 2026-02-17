@@ -1,25 +1,54 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { adminLogin, fetchAnalytics } from "@/lib/api";
+import { AnalyticsSummary, adminLogin, fetchAnalytics } from "@/lib/api";
 
 export default function AdminPage() {
   const [passkey, setPasskey] = useState("");
   const [token, setToken] = useState<string>("");
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
 
-  const login = useMutation({
-    mutationFn: () => adminLogin(passkey),
-    onSuccess: (data) => setToken(data.access_token),
-  });
+  const loadAnalytics = useCallback(async (authToken: string) => {
+    setAnalyticsLoading(true);
+    setAnalyticsError("");
+    try {
+      const data = await fetchAnalytics(authToken);
+      setAnalytics(data);
+    } catch (err) {
+      setAnalyticsError(err instanceof Error ? err.message : "Failed to load analytics");
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
 
-  const analytics = useQuery({
-    queryKey: ["analytics", token],
-    queryFn: () => fetchAnalytics(token),
-    enabled: Boolean(token),
-  });
+  useEffect(() => {
+    if (!token) {
+      setAnalytics(null);
+      setAnalyticsError("");
+      setAnalyticsLoading(false);
+      return;
+    }
+    void loadAnalytics(token);
+  }, [token, loadAnalytics]);
+
+  const handleLogin = async () => {
+    setIsAuthenticating(true);
+    setAuthError("");
+    try {
+      const data = await adminLogin(passkey);
+      setToken(data.access_token);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Authentication failed");
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
 
   return (
     <main className="mx-auto my-8 max-w-4xl rounded-2xl border border-cida-line bg-cida-panel p-8 shadow-panel">
@@ -40,30 +69,40 @@ export default function AdminPage() {
             className="w-full rounded-lg border border-cida-line p-2"
           />
           <button
-            onClick={() => login.mutate()}
-            disabled={login.isPending}
+            onClick={handleLogin}
+            disabled={isAuthenticating}
             className="rounded-xl bg-cida-accent px-4 py-2 font-semibold text-white"
           >
-            {login.isPending ? "Authenticating..." : "Login"}
+            {isAuthenticating ? "Authenticating..." : "Login"}
           </button>
-          {login.error && <p className="text-sm text-red-600">{(login.error as Error).message}</p>}
+          {authError && <p className="text-sm text-red-600">{authError}</p>}
         </div>
       ) : (
         <div className="rounded-xl border border-cida-line bg-white p-4">
-          <p className="mb-4 text-sm text-cida-mute">Authenticated</p>
+          <div className="mb-4 flex items-center justify-between">
+            <p className="text-sm text-cida-mute">Authenticated</p>
+            <button
+              type="button"
+              onClick={() => void loadAnalytics(token)}
+              disabled={analyticsLoading}
+              className="rounded-lg border border-cida-line px-3 py-1 text-sm hover:bg-cida-panel disabled:opacity-60"
+            >
+              {analyticsLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
 
-          {analytics.isLoading && <p>Loading analytics...</p>}
-          {analytics.error && <p className="text-red-600">{(analytics.error as Error).message}</p>}
+          {analyticsLoading && <p>Loading analytics...</p>}
+          {analyticsError && <p className="text-red-600">{analyticsError}</p>}
 
-          {analytics.data && (
+          {analytics && (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="rounded-lg border border-cida-line p-3">
                 <p className="text-xs text-cida-mute">Total Analyses</p>
-                <p className="text-2xl font-bold">{analytics.data.total_analyses}</p>
+                <p className="text-2xl font-bold">{analytics.total_analyses}</p>
               </div>
               <div className="rounded-lg border border-cida-line p-3">
                 <p className="text-xs text-cida-mute">P95 Latency</p>
-                <p className="text-2xl font-bold">{analytics.data.p95_latency_ms} ms</p>
+                <p className="text-2xl font-bold">{analytics.p95_latency_ms} ms</p>
               </div>
             </div>
           )}
