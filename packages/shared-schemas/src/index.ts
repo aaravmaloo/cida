@@ -19,18 +19,6 @@ export interface AnalyzeResponse {
   latency_ms: number;
 }
 
-export interface HumanizeResponse {
-  humanize_id: string;
-  rewritten_text: string;
-  diff_stats: {
-    changed_tokens: number;
-    change_ratio: number;
-  };
-  readability_delta: number;
-  quality_flags: string[];
-  latency_ms: number;
-}
-
 export interface ReportCreateResponse {
   report_id: string;
   status: "queued" | "processing" | "ready" | "failed";
