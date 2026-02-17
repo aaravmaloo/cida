@@ -4,6 +4,7 @@ export interface AnalyzeResponse {
   analysis_id: string;
   ai_probability: number;
   human_score: number;
+  predicted_label: "AI" | "Human";
   confidence_band: ConfidenceBand;
   readability: {
     flesch_reading_ease: number;
