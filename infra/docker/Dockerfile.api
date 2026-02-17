@@ -10,10 +10,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY services/api/requirements.txt /tmp/requirements.txt
-COPY services/api/requirements-torch-cpu.txt /tmp/requirements-torch-cpu.txt
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt \
-    && pip install --no-cache-dir -r /tmp/requirements-torch-cpu.txt \
     && find /opt/venv/lib/python*/site-packages -maxdepth 1 -type d \( -name "nvidia*" -o -name "triton*" \) -exec rm -rf {} + \
     && find /opt/venv/lib/python*/site-packages -maxdepth 1 -type d \( -name "nvidia*dist-info" -o -name "triton*dist-info" \) -exec rm -rf {} + \
     && test -z "$(find /opt/venv/lib/python*/site-packages -maxdepth 1 -type d \( -name "nvidia*" -o -name "triton*" \) -print -quit)" \
@@ -21,8 +19,6 @@ RUN pip install --upgrade pip \
     && rm -rf /opt/venv/lib/python*/site-packages/setuptools /opt/venv/lib/python*/site-packages/setuptools-* \
     && rm -rf /opt/venv/lib/python*/site-packages/wheel /opt/venv/lib/python*/site-packages/wheel-* \
     && rm -f /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.* \
-    && rm -rf /opt/venv/lib/python*/site-packages/torch/include /opt/venv/lib/python*/site-packages/torch/share \
-    && find /opt/venv/lib/python*/site-packages/torch -type f -name "*.a" -delete \
     && rm -rf /root/.cache /tmp/* \
     && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf {} + \
     && find /opt/venv -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete \
@@ -32,15 +28,13 @@ FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH" \
-    HF_HOME=/app/.cache/huggingface
+    PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY services/api/app /app/app
 
-RUN mkdir -p /app/.cache/huggingface \
-    && rm -rf /root/.cache /tmp/* \
+RUN rm -rf /root/.cache /tmp/* \
     && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf {} + \
     && find /opt/venv -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete \
     && find /opt/venv -type d -name tests -prune -exec rm -rf {} +
