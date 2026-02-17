@@ -59,6 +59,7 @@ async function handle<T>(response: Response): Promise<T> {
 export async function analyzeText(text: string): Promise<AnalyzeResponse> {
   const response = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, source: "paste" }),
   });
@@ -72,6 +73,7 @@ export async function analyzeFile(file: File): Promise<AnalyzeResponse> {
 
   const response = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
+    cache: "no-store",
     body: fd,
   });
   return handle<AnalyzeResponse>(response);
@@ -80,6 +82,7 @@ export async function analyzeFile(file: File): Promise<AnalyzeResponse> {
 export async function createReport(analysisId: string): Promise<ReportCreateResponse> {
   const response = await fetch(`${API_BASE}/reports`, {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ analysis_id: analysisId }),
   });
@@ -87,13 +90,14 @@ export async function createReport(analysisId: string): Promise<ReportCreateResp
 }
 
 export async function getReportStatus(reportId: string): Promise<ReportStatusResponse> {
-  const response = await fetch(`${API_BASE}/reports/${reportId}`);
+  const response = await fetch(`${API_BASE}/reports/${reportId}`, { cache: "no-store" });
   return handle<ReportStatusResponse>(response);
 }
 
 export async function adminLogin(passkey: string): Promise<{ access_token: string }> {
   const response = await fetch(`${API_BASE}/admin/login`, {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ passkey }),
   });
@@ -102,6 +106,7 @@ export async function adminLogin(passkey: string): Promise<{ access_token: strin
 
 export async function fetchAnalytics(token: string): Promise<AnalyticsSummary> {
   const response = await fetch(`${API_BASE}/analytics/summary`, {
+    cache: "no-store",
     headers: {
       Authorization: `Bearer ${token}`,
     },
