@@ -1,9 +1,8 @@
 ﻿# CIDA
 
-CIDA is an AI text platform with two core capabilities:
+CIDA is an AI text platform with a core capability focused on:
 
 - AI-generated text detection
-- AI text humanization
 
 It also includes admin analytics, async report generation, rate limiting, and Turnstile verification.
 
@@ -22,14 +21,6 @@ CIDA now uses open-source Hugging Face models directly at runtime.
   - `0` = human-written
   - `1` = AI-generated
 
-### Humanizer
-
-- Default model: `google/flan-t5-small`
-- URL: https://huggingface.co/google/flan-t5-small
-- Task: text2text generation / rewriting
-- License: Apache-2.0
-- Runtime: local `transformers` inference in API process (no Hugging Face Inference API/router calls).
-
 ## What the System Does
 
 1. User submits text or a file from `apps/web`.
@@ -38,17 +29,16 @@ CIDA now uses open-source Hugging Face models directly at runtime.
    - validates Turnstile,
    - enforces Redis sliding-window rate limits,
    - runs detector inference,
-   - runs humanizer rewriting,
    - stores events in Postgres.
 4. Report jobs are queued in Redis.
 5. `services/worker` renders and stores JSON/PDF reports.
 
-If Hugging Face model loading fails, API uses deterministic fallback logic (heuristic detector + rule-based rewriting) so the service still responds.
+If Hugging Face model loading fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
 
 ## Repository Layout
 
 - `apps/web`: Next.js frontend
-- `services/api`: FastAPI backend (detector + humanizer)
+- `services/api`: FastAPI backend (detector)
 - `services/worker`: async report worker
 - `packages/shared-schemas`: shared OpenAPI/schema package
 - `infra/docker`: Dockerfiles + compose
@@ -82,14 +72,6 @@ Model/runtime:
 - `DETECTOR_AI_LABEL` (default `1`)
 - `DETECTOR_MAX_LENGTH`
 - `DETECTOR_EAGER_LOAD` (default `false`; lazy-load detector to reduce startup RAM)
-- `RELEASE_DETECTOR_FOR_HUMANIZER` (default `true`; frees detector RAM before humanizer load)
-- `HUMANIZER_MODEL_NAME` (default `google/flan-t5-small`)
-- `HUMANIZER_ALLOW_REMOTE_DOWNLOAD`
-- `HUMANIZER_REQUIRE_MODEL` (default `true`; if model load/inference fails, request fails instead of fallback)
-- `HUMANIZER_TEMPERATURE` (default `0.7`; local sampling)
-- `HUMANIZER_TOP_P` (default `0.9`; local sampling)
-- `HUMANIZER_MAX_INPUT_TOKENS` (upper bound; runtime also clamps to model context window)
-- `HUMANIZER_MAX_NEW_TOKENS`
 
 Optional:
 
@@ -186,8 +168,6 @@ curl -i https://<api-domain>/readyz
 
 - Detector model by **shahxeebhassan**:
   - https://huggingface.co/shahxeebhassan/bert_base_ai_content_detector
-- Humanizer default model by **Google**:
-  - https://huggingface.co/google/flan-t5-small
 - Detector dataset by **shahxeebhassan**:
   - https://huggingface.co/datasets/shahxeebhassan/human_vs_ai_sentences
 
@@ -195,7 +175,7 @@ curl -i https://<api-domain>/readyz
 
 - Detector output is probabilistic, not proof of authorship.
 - Keep human review in high-stakes decisions.
-- Disclose machine-generated scoring and rewriting to end users.
+- Disclose machine-generated scoring to end users.
 - Avoid storing sensitive text unless needed and consented.
 
 ## License and Contribution
