@@ -56,14 +56,10 @@ export default function AdminPage() {
           {analytics.error && <p className="text-red-600">{(analytics.error as Error).message}</p>}
 
           {analytics.data && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="rounded-lg border border-cida-line p-3">
                 <p className="text-xs text-cida-mute">Total Analyses</p>
                 <p className="text-2xl font-bold">{analytics.data.total_analyses}</p>
-              </div>
-              <div className="rounded-lg border border-cida-line p-3">
-                <p className="text-xs text-cida-mute">Total Humanizations</p>
-                <p className="text-2xl font-bold">{analytics.data.total_humanizations}</p>
               </div>
               <div className="rounded-lg border border-cida-line p-3">
                 <p className="text-xs text-cida-mute">P95 Latency</p>
