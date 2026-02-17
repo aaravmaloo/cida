@@ -15,7 +15,7 @@ CIDA now runs detector scoring through a Hugging Face Space endpoint.
 - Model: `desklib/ai-text-detector-v1.01`
 - Provider: Hugging Face Space (`aaravmaloo/ai-content-detector`)
 - Task: AI-likelihood scoring (returns `ai_probability` in `[0, 1]`)
-- Runtime: API calls Space Gradio API (default `/gradio_api/call/detect_ai_content`) with `{"data": ["<text>"]}` payload; if unavailable, service falls back to local heuristic scoring.
+- Runtime: API calls Space Gradio API (default `/gradio_api/call/detect_ai_content`) with `{"data": ["<text>"]}` payload and maps the returned class probabilities directly.
 
 ## What the System Does
 
@@ -29,7 +29,7 @@ CIDA now runs detector scoring through a Hugging Face Space endpoint.
 4. Report jobs are queued in Redis.
 5. `services/worker` renders and stores JSON/PDF reports.
 
-If Space inference is unavailable or response parsing fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
+If Space inference is unavailable or response parsing fails, API returns an inference error (no local AI fallback score is used).
 
 ## Repository Layout
 
@@ -45,7 +45,7 @@ If Space inference is unavailable or response parsing fails, API uses determinis
 - API: FastAPI (`services/api`)
 - Worker: ARQ (`services/worker`)
 - Database: PostgreSQL
-- Queue/cache/rate-limit state: Redis
+- Queue/rate-limit state: Redis
 
 ## Environment Variables
 
