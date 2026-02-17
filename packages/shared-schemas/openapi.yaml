@@ -11,12 +11,6 @@ paths:
       responses:
         '200':
           description: OK
-  /v1/humanize:
-    post:
-      summary: Humanize text for clarity
-      responses:
-        '200':
-          description: OK
   /v1/reports:
     post:
       summary: Create report job
