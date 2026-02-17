@@ -1,4 +1,3 @@
-from functools import lru_cache
 import json
 import re
 from urllib.parse import urlsplit
@@ -133,9 +132,6 @@ class Settings(BaseSettings):
     def cors_origin_regex(self) -> str | None:
         value = self.cors_allow_origin_regex.strip()
         return value or None
-
-
-@lru_cache
 
 def get_settings() -> Settings:
     return Settings()
