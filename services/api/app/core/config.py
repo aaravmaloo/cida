@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+import re
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
     hf_space_predict_url: str = Field(
-        default="https://aaravmaloo.ai-content-detector.hf.space/run/predict",
+        default="https://aaravmaloo-ai-content-detector.hf.space/gradio_api/call/detect_ai_content",
         alias="HF_SPACE_PREDICT_URL",
     )
     hf_space_api_token: str = Field(default="", alias="HF_SPACE_API_TOKEN")
@@ -75,9 +76,20 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_hf_space_predict_url(cls, value: object) -> object:
         if not isinstance(value, str):
-            return "https://aaravmaloo.ai-content-detector.hf.space/run/predict"
+            return "https://aaravmaloo-ai-content-detector.hf.space/gradio_api/call/detect_ai_content"
         normalized = value.strip().rstrip("/")
-        return normalized or "https://aaravmaloo.ai-content-detector.hf.space/run/predict"
+        if not normalized:
+            return "https://aaravmaloo-ai-content-detector.hf.space/gradio_api/call/detect_ai_content"
+
+        dotted_space = re.match(r"^(https?://)([^./]+)\.([^.]+)\.hf\.space(.*)$", normalized)
+        if dotted_space:
+            normalized = (
+                f"{dotted_space.group(1)}"
+                f"{dotted_space.group(2)}-{dotted_space.group(3)}.hf.space"
+                f"{dotted_space.group(4)}"
+            )
+
+        return normalized
 
     @staticmethod
     def _normalize_origin(origin: str) -> str:
