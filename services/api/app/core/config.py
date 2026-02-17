@@ -47,15 +47,6 @@ class Settings(BaseSettings):
     detector_ai_label: int = Field(default=1, alias="DETECTOR_AI_LABEL")
     detector_max_length: int = Field(default=512, alias="DETECTOR_MAX_LENGTH")
     detector_eager_load: bool = Field(default=False, alias="DETECTOR_EAGER_LOAD")
-    release_detector_for_humanizer: bool = Field(default=True, alias="RELEASE_DETECTOR_FOR_HUMANIZER")
-
-    humanizer_model_name: str = Field(default="google/flan-t5-small", alias="HUMANIZER_MODEL_NAME")
-    humanizer_allow_remote_download: bool = Field(default=True, alias="HUMANIZER_ALLOW_REMOTE_DOWNLOAD")
-    humanizer_require_model: bool = Field(default=True, alias="HUMANIZER_REQUIRE_MODEL")
-    humanizer_temperature: float = Field(default=0.7, alias="HUMANIZER_TEMPERATURE")
-    humanizer_top_p: float = Field(default=0.9, alias="HUMANIZER_TOP_P")
-    humanizer_max_input_tokens: int = Field(default=512, alias="HUMANIZER_MAX_INPUT_TOKENS")
-    humanizer_max_new_tokens: int = Field(default=256, alias="HUMANIZER_MAX_NEW_TOKENS")
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
