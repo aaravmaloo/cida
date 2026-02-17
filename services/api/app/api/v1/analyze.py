@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 import uuid
 
@@ -13,7 +12,7 @@ from app.core.redis import get_redis
 from app.db.session import get_db
 from app.models.entities import AnalysisEvent
 from app.schemas.analyze import AnalyzeResponse
-from app.services.inference import detector_service
+from app.services.inference import DetectorInferenceError, detector_service
 from app.services.turnstile import verify_turnstile
 from app.utils.files import extract_text_from_upload
 from app.utils.hashing import sha256_text
@@ -68,18 +67,17 @@ async def analyze_content(
 
     normalized = normalize_text(text)
     text_hash = sha256_text(normalized)
-    cache_key = f"analysis:{text_hash}:{settings.hf_space_model_version}"
 
-    cached = await redis.get(cache_key)
-    if cached:
-        payload = json.loads(cached)
-        payload["analysis_id"] = uuid.uuid4().hex
-        payload["latency_ms"] = round((time.perf_counter() - start) * 1000, 3)
-    else:
+    try:
         payload = detector_service.analyze(normalized)
-        payload["analysis_id"] = uuid.uuid4().hex
-        payload["latency_ms"] = round((time.perf_counter() - start) * 1000, 3)
-        await redis.setex(cache_key, settings.cache_ttl_seconds, json.dumps(payload, ensure_ascii=True))
+    except DetectorInferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"HF Space inference failed: {exc}",
+        ) from exc
+
+    payload["analysis_id"] = uuid.uuid4().hex
+    payload["latency_ms"] = round((time.perf_counter() - start) * 1000, 3)
 
     event = AnalysisEvent(
         analysis_id=payload["analysis_id"],
@@ -95,7 +93,7 @@ async def analyze_content(
         word_count=payload["word_count"],
         estimated_read_time=payload["estimated_read_time"],
         latency_ms=payload["latency_ms"],
-        metadata_json={"source_ip": ip, "cached": bool(cached)},
+        metadata_json={"source_ip": ip},
     )
     db.add(event)
     await db.commit()
