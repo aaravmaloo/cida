@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
 from app.db.session import get_db
-from app.models.entities import AnalysisEvent, HumanizeEvent
+from app.models.entities import AnalysisEvent
 from app.schemas.analytics import AnalyticsSummaryResponse
 
 router = APIRouter()
@@ -32,7 +32,6 @@ async def analytics_summary(
     db: AsyncSession = Depends(get_db),
 ):
     total_analyses = int((await db.scalar(select(func.count()).select_from(AnalysisEvent))) or 0)
-    total_humanizations = int((await db.scalar(select(func.count()).select_from(HumanizeEvent))) or 0)
     avg_ai_probability = float((await db.scalar(select(func.avg(AnalysisEvent.ai_probability)))) or 0.0)
 
     latencies = (await db.scalars(select(AnalysisEvent.latency_ms))).all()
@@ -49,7 +48,6 @@ async def analytics_summary(
 
     return AnalyticsSummaryResponse(
         total_analyses=total_analyses,
-        total_humanizations=total_humanizations,
         avg_ai_probability=round(avg_ai_probability, 6),
         p95_latency_ms=round(p95_latency, 3),
         confidence_distribution=dist,
