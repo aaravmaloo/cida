@@ -14,9 +14,6 @@ export function TopNav() {
         <Link className="rounded-lg bg-white px-4 py-2 font-semibold text-cida-accent shadow-sm" href="/">
           AI Detector
         </Link>
-        <Link className="rounded-lg px-4 py-2 text-cida-mute hover:bg-white" href="/humanizer">
-          Humanizer
-        </Link>
         <Link className="rounded-lg px-4 py-2 text-cida-mute hover:bg-white" href="/admin">
           Admin
         </Link>
