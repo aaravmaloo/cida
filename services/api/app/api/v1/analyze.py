@@ -68,7 +68,7 @@ async def analyze_content(
 
     normalized = normalize_text(text)
     text_hash = sha256_text(normalized)
-    cache_key = f"analysis:{text_hash}:{settings.groq_model}"
+    cache_key = f"analysis:{text_hash}:{settings.hf_space_model_version}"
 
     cached = await redis.get(cache_key)
     if cached:
