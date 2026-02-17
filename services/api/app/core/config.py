@@ -38,13 +38,17 @@ class Settings(BaseSettings):
     )
     cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
-    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
-    groq_model: str = Field(default="llama-3.1-8b-instant", alias="GROQ_MODEL")
-    groq_temperature: float = Field(default=1.0, alias="GROQ_TEMPERATURE")
-    groq_top_p: float = Field(default=1.0, alias="GROQ_TOP_P")
-    groq_max_completion_tokens: int = Field(default=8192, alias="GROQ_MAX_COMPLETION_TOKENS")
-    groq_reasoning_effort: str = Field(default="medium", alias="GROQ_REASONING_EFFORT")
-    groq_max_input_chars: int = Field(default=12000, alias="GROQ_MAX_INPUT_CHARS")
+    hf_space_predict_url: str = Field(
+        default="https://aaravmaloo.ai-content-detector.hf.space/run/predict",
+        alias="HF_SPACE_PREDICT_URL",
+    )
+    hf_space_api_token: str = Field(default="", alias="HF_SPACE_API_TOKEN")
+    hf_space_timeout_seconds: float = Field(default=20.0, alias="HF_SPACE_TIMEOUT_SECONDS")
+    hf_space_max_input_chars: int = Field(default=12000, alias="HF_SPACE_MAX_INPUT_CHARS")
+    hf_space_model_version: str = Field(
+        default="desklib/ai-text-detector-v1.01",
+        alias="HF_SPACE_MODEL_VERSION",
+    )
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
@@ -67,15 +71,13 @@ class Settings(BaseSettings):
             return _normalize_async_database_url(value)
         return value
 
-    @field_validator("groq_reasoning_effort", mode="before")
+    @field_validator("hf_space_predict_url", mode="before")
     @classmethod
-    def normalize_reasoning_effort(cls, value: object) -> object:
+    def normalize_hf_space_predict_url(cls, value: object) -> object:
         if not isinstance(value, str):
-            return "medium"
-        normalized = value.strip().lower()
-        if normalized in {"low", "medium", "high"}:
-            return normalized
-        return "medium"
+            return "https://aaravmaloo.ai-content-detector.hf.space/run/predict"
+        normalized = value.strip().rstrip("/")
+        return normalized or "https://aaravmaloo.ai-content-detector.hf.space/run/predict"
 
     @staticmethod
     def _normalize_origin(origin: str) -> str:
