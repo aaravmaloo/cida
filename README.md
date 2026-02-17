@@ -15,7 +15,7 @@ CIDA now runs detector scoring through a Hugging Face Space endpoint.
 - Model: `desklib/ai-text-detector-v1.01`
 - Provider: Hugging Face Space (`aaravmaloo/ai-content-detector`)
 - Task: AI-likelihood scoring (returns `ai_probability` in `[0, 1]`)
-- Runtime: API calls Space `/run/predict`; if unavailable, service falls back to local heuristic scoring.
+- Runtime: API calls Space Gradio API (default `/gradio_api/call/detect_ai_content`) with `{"data": ["<text>"]}` payload; if unavailable, service falls back to local heuristic scoring.
 
 ## What the System Does
 
@@ -62,7 +62,7 @@ Required:
 
 Model/runtime:
 
-- `HF_SPACE_PREDICT_URL` (default `https://aaravmaloo.ai-content-detector.hf.space/run/predict`)
+- `HF_SPACE_PREDICT_URL` (default `https://aaravmaloo-ai-content-detector.hf.space/gradio_api/call/detect_ai_content`)
 - `HF_SPACE_API_TOKEN` (optional)
 - `HF_SPACE_TIMEOUT_SECONDS` (default `20`)
 - `HF_SPACE_MAX_INPUT_CHARS` (default `12000`)
