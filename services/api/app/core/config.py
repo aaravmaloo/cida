@@ -38,15 +38,13 @@ class Settings(BaseSettings):
     )
     cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
-    model_version: str = Field(default="hf-shahxeebhassan-bert-base-ai-content-detector", alias="MODEL_VERSION")
-    detector_model_name: str = Field(
-        default="shahxeebhassan/bert_base_ai_content_detector",
-        alias="DETECTOR_MODEL_NAME",
-    )
-    detector_allow_remote_download: bool = Field(default=True, alias="DETECTOR_ALLOW_REMOTE_DOWNLOAD")
-    detector_ai_label: int = Field(default=1, alias="DETECTOR_AI_LABEL")
-    detector_max_length: int = Field(default=512, alias="DETECTOR_MAX_LENGTH")
-    detector_eager_load: bool = Field(default=False, alias="DETECTOR_EAGER_LOAD")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
+    groq_temperature: float = Field(default=1.0, alias="GROQ_TEMPERATURE")
+    groq_top_p: float = Field(default=1.0, alias="GROQ_TOP_P")
+    groq_max_completion_tokens: int = Field(default=8192, alias="GROQ_MAX_COMPLETION_TOKENS")
+    groq_reasoning_effort: str = Field(default="medium", alias="GROQ_REASONING_EFFORT")
+    groq_max_input_chars: int = Field(default=12000, alias="GROQ_MAX_INPUT_CHARS")
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
@@ -68,6 +66,16 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return _normalize_async_database_url(value)
         return value
+
+    @field_validator("groq_reasoning_effort", mode="before")
+    @classmethod
+    def normalize_reasoning_effort(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return "medium"
+        normalized = value.strip().lower()
+        if normalized in {"low", "medium", "high"}:
+            return normalized
+        return "medium"
 
     @staticmethod
     def _normalize_origin(origin: str) -> str:
