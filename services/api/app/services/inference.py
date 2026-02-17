@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import gc
 import json
-import math
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -24,11 +23,14 @@ _HUMAN_TOKENS = ("human", "real", "original", "authentic")
 _AI_TOKENS = ("ai", "generated", "machine", "synthetic", "llm", "bot")
 
 
+class DetectorInferenceError(RuntimeError):
+    """Raised when HF Space inference cannot provide a valid prediction."""
+
+
 class DetectorService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client: httpx.Client | None = None
-        self.using_model = False
         self.predict_url = self.settings.hf_space_predict_url
         self._discovery_attempted = False
 
@@ -60,10 +62,6 @@ class DetectorService:
             self.client = None
         gc.collect()
         logger.info("detector_model_release_noop")
-
-    @staticmethod
-    def _sigmoid(x: float) -> float:
-        return 1.0 / (1.0 + math.exp(-x))
 
     @staticmethod
     def _normalize_label(value: str) -> str:
@@ -254,7 +252,16 @@ class DetectorService:
             return payload
         return [payload]
 
-    def _resolve_space_probability(self, payload: Any) -> float | None:
+    def _label_class(self, normalized_label: str) -> str | None:
+        if any(token in normalized_label for token in _NEGATIVE_AI_TOKENS):
+            return "human"
+        if any(token in normalized_label for token in _HUMAN_TOKENS):
+            return "human"
+        if any(token in normalized_label for token in _AI_TOKENS):
+            return "ai"
+        return None
+
+    def _resolve_space_result(self, payload: Any) -> tuple[float, float, str] | None:
         data_payload = self._extract_data_payload(payload)
         first_item = data_payload[0] if data_payload else payload
         label_scores = self._extract_label_scores(first_item)
@@ -263,17 +270,18 @@ class DetectorService:
         human_probability: float | None = None
 
         for label, score in label_scores.items():
-            if any(token in label for token in _NEGATIVE_AI_TOKENS):
+            label_class = self._label_class(label)
+            if label_class == "human":
                 human_probability = max(human_probability or 0.0, score)
-            elif any(token in label for token in _HUMAN_TOKENS):
-                human_probability = max(human_probability or 0.0, score)
-            elif any(token in label for token in _AI_TOKENS):
+            elif label_class == "ai":
                 ai_probability = max(ai_probability or 0.0, score)
 
-        if ai_probability is not None:
-            return ai_probability
-        if human_probability is not None:
-            return float(clamp(1.0 - human_probability, 0.0, 1.0))
+        if ai_probability is None and human_probability is not None:
+            ai_probability = float(clamp(1.0 - human_probability, 0.0, 1.0))
+        if human_probability is None and ai_probability is not None:
+            human_probability = float(clamp(1.0 - ai_probability, 0.0, 1.0))
+        if ai_probability is None or human_probability is None:
+            return None
 
         predicted_label: str | None = None
         if len(data_payload) > 1 and isinstance(data_payload[1], str):
@@ -281,19 +289,18 @@ class DetectorService:
         elif isinstance(first_item, dict) and isinstance(first_item.get("label"), str):
             predicted_label = self._normalize_label(first_item["label"])
 
-        if predicted_label is not None:
-            if any(token in predicted_label for token in _NEGATIVE_AI_TOKENS):
-                return 0.0
-            if any(token in predicted_label for token in _HUMAN_TOKENS):
-                return 0.0
-            if any(token in predicted_label for token in _AI_TOKENS):
-                return 1.0
+        label_class = self._label_class(predicted_label) if predicted_label is not None else None
+        if label_class is None:
+            label_class = "ai" if ai_probability >= human_probability else "human"
 
-        return None
+        normalized_ai = float(clamp(ai_probability, 0.0, 1.0))
+        normalized_human = float(clamp(human_probability, 0.0, 1.0))
+        simple_label = "AI" if label_class == "ai" else "Human"
+        return normalized_ai, normalized_human, simple_label
 
-    def _space_probability(self, text: str) -> float | None:
+    def _space_result(self, text: str) -> tuple[float, float, str]:
         if self.client is None:
-            return None
+            raise DetectorInferenceError("HF Space client is unavailable")
 
         truncated = text[: max(200, self.settings.hf_space_max_input_chars)]
         request_payload = {"data": [truncated]}
@@ -309,45 +316,19 @@ class DetectorService:
                     logger.info("detector_hf_space_endpoint_switched", endpoint=discovered)
 
         if payload is None:
-            return None
+            raise DetectorInferenceError("HF Space request failed")
 
-        probability = self._resolve_space_probability(payload)
-        if probability is None:
+        resolved = self._resolve_space_result(payload)
+        if resolved is None:
             logger.warning("detector_hf_space_unparseable_response", preview=str(payload)[:180])
-        return probability
-
-    def _heuristic_logit(self, text: str) -> float:
-        m = compute_metrics(text)
-        avg_word_len = (sum(len(w) for w in text.split()) / max(1, m.word_count)) if m.word_count else 0.0
-
-        # Heuristic fallback calibrated around typical long-form prose stats.
-        logit = (
-            (m.complexity - 0.58) * 2.4
-            - (m.vocab_diversity - 0.60) * 1.2
-            - (m.burstiness - 0.24) * 1.8
-            + ((m.readability["flesch_kincaid_grade"] - 9.0) / 8.0) * 0.9
-            + ((avg_word_len - 4.8) / 2.0) * 0.35
-        )
-        return float(clamp(logit, -6.0, 6.0))
-
-    def _model_probability(self, text: str) -> float:
-        probability = self._space_probability(text)
-        if probability is not None:
-            self.using_model = True
-            return probability
-
-        self.using_model = False
-        return self._sigmoid(self._heuristic_logit(text))
+            raise DetectorInferenceError("HF Space response did not contain valid class probabilities")
+        return resolved
 
     def _confidence_band(self, prob: float) -> str:
         distance = abs(prob - 0.5)
-        adjusted = distance
-        if not self.using_model:
-            adjusted = min(adjusted, 0.28)
-
-        if adjusted > 0.30:
+        if distance > 0.30:
             return "high"
-        if adjusted > 0.15:
+        if distance > 0.15:
             return "medium"
         return "low"
 
@@ -355,12 +336,13 @@ class DetectorService:
         normalized = normalize_text(text)
         metrics = compute_metrics(normalized)
 
-        prob = self._model_probability(normalized)
+        ai_prob, human_prob, label = self._space_result(normalized)
 
         return {
-            "ai_probability": round(prob, 6),
-            "human_score": round(1.0 - prob, 6),
-            "confidence_band": self._confidence_band(prob),
+            "ai_probability": round(ai_prob, 6),
+            "human_score": round(human_prob, 6),
+            "predicted_label": label,
+            "confidence_band": self._confidence_band(ai_prob),
             "readability": metrics.readability,
             "complexity": metrics.complexity,
             "burstiness": metrics.burstiness,
