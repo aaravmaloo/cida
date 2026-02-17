@@ -17,20 +17,6 @@ export type AnalyzeResponse = {
   latency_ms: number;
 };
 
-export type HumanizeResponse = {
-  humanize_id: string;
-  rewritten_text: string;
-  diff_stats: {
-    changed_tokens: number;
-    change_ratio: number;
-  };
-  readability_delta: number;
-  quality_flags: string[];
-  humanizer_mode: string;
-  humanizer_model: string;
-  latency_ms: number;
-};
-
 export type ReportCreateResponse = {
   report_id: string;
   status: "queued" | "processing" | "ready" | "failed";
@@ -46,7 +32,6 @@ export type ReportStatusResponse = {
 
 export type AnalyticsSummary = {
   total_analyses: number;
-  total_humanizations: number;
   avg_ai_probability: number;
   p95_latency_ms: number;
   confidence_distribution: Record<string, number>;
@@ -89,20 +74,6 @@ export async function analyzeFile(file: File): Promise<AnalyzeResponse> {
     body: fd,
   });
   return handle<AnalyzeResponse>(response);
-}
-
-export async function humanizeText(payload: {
-  text: string;
-  style: "natural" | "formal" | "concise";
-  strength: number;
-  preserve_terms: string[];
-}): Promise<HumanizeResponse> {
-  const response = await fetch(`${API_BASE}/humanize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return handle<HumanizeResponse>(response);
 }
 
 export async function createReport(analysisId: string): Promise<ReportCreateResponse> {
