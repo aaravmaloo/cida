@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -27,6 +29,8 @@ class DetectorService:
         self.settings = get_settings()
         self.client: httpx.Client | None = None
         self.using_model = False
+        self.predict_url = self.settings.hf_space_predict_url
+        self._discovery_attempted = False
 
         headers = {"Accept": "application/json"}
         if self.settings.hf_space_api_token:
@@ -83,133 +87,200 @@ class DetectorService:
             numeric /= 100.0
         return float(clamp(numeric, 0.0, 1.0))
 
-    @staticmethod
-    def _collect_label_scores(payload: Any) -> dict[str, float]:
+    def _discover_queue_predict_url(self) -> str | None:
+        if self.client is None:
+            return None
+        if self._discovery_attempted:
+            return None
+
+        self._discovery_attempted = True
+        parsed = urlsplit(self.settings.hf_space_predict_url)
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        try:
+            response = self.client.get(f"{base_url}/gradio_api/info")
+        except Exception:
+            logger.exception("detector_hf_space_info_fetch_failed", base_url=base_url)
+            return None
+
+        if response.status_code >= 400:
+            logger.warning(
+                "detector_hf_space_info_http_error",
+                base_url=base_url,
+                status_code=response.status_code,
+                preview=response.text[:180],
+            )
+            return None
+
+        try:
+            payload = response.json()
+        except ValueError:
+            logger.warning("detector_hf_space_info_unparseable_response", preview=response.text[:180])
+            return None
+
+        named_endpoints = payload.get("named_endpoints") if isinstance(payload, dict) else None
+        if not isinstance(named_endpoints, dict) or not named_endpoints:
+            return None
+
+        preferred = ("/detect_ai_content", "/predict")
+        endpoint_name = next((name for name in preferred if name in named_endpoints), None)
+        if endpoint_name is None:
+            endpoint_name = next(iter(named_endpoints.keys()), None)
+        if not isinstance(endpoint_name, str) or not endpoint_name.strip():
+            return None
+
+        clean_name = endpoint_name.strip().lstrip("/")
+        if not clean_name:
+            return None
+
+        discovered = f"{base_url}/gradio_api/call/{clean_name}"
+        logger.info("detector_hf_space_endpoint_discovered", endpoint=discovered)
+        return discovered
+
+    def _parse_queue_sse_payload(self, raw_text: str) -> Any | None:
+        data_lines = [line[len("data:") :].strip() for line in raw_text.splitlines() if line.startswith("data:")]
+        for item in reversed(data_lines):
+            if not item:
+                continue
+            try:
+                return json.loads(item)
+            except json.JSONDecodeError:
+                continue
+        return None
+
+    def _call_space_endpoint(self, endpoint_url: str, request_payload: dict[str, Any]) -> Any | None:
+        if self.client is None:
+            return None
+
+        try:
+            response = self.client.post(endpoint_url, json=request_payload)
+        except Exception:
+            logger.exception("detector_hf_space_inference_failed", endpoint=endpoint_url)
+            return None
+
+        if response.status_code >= 400:
+            logger.warning(
+                "detector_hf_space_http_error",
+                endpoint=endpoint_url,
+                status_code=response.status_code,
+                preview=response.text[:180],
+            )
+            return None
+
+        try:
+            payload = response.json()
+        except ValueError:
+            logger.warning("detector_hf_space_unparseable_response", preview=response.text[:180])
+            return None
+
+        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+            logger.warning("detector_hf_space_inference_error", preview=payload["error"][:180])
+            return None
+
+        if isinstance(payload, dict) and isinstance(payload.get("event_id"), str):
+            event_id = payload["event_id"].strip()
+            if not event_id:
+                return None
+            stream_url = f"{endpoint_url.rstrip('/')}/{event_id}"
+            try:
+                stream_response = self.client.get(stream_url)
+            except Exception:
+                logger.exception("detector_hf_space_queue_fetch_failed", endpoint=stream_url)
+                return None
+
+            if stream_response.status_code >= 400:
+                logger.warning(
+                    "detector_hf_space_queue_http_error",
+                    endpoint=stream_url,
+                    status_code=stream_response.status_code,
+                    preview=stream_response.text[:180],
+                )
+                return None
+
+            queue_payload = self._parse_queue_sse_payload(stream_response.text)
+            if queue_payload is None:
+                logger.warning("detector_hf_space_queue_unparseable_response", preview=stream_response.text[:180])
+                return None
+            return queue_payload
+
+        return payload
+
+    def _extract_label_scores(self, result: Any) -> dict[str, float]:
         scores: dict[str, float] = {}
-        stack: list[Any] = [payload]
 
         def set_score(label: str, raw_score: Any) -> None:
-            coerced = DetectorService._coerce_probability(raw_score)
+            normalized = self._normalize_label(label)
+            if not normalized:
+                return
+            coerced = self._coerce_probability(raw_score)
             if coerced is None:
                 return
-            normalized_label = DetectorService._normalize_label(label)
-            if not normalized_label:
-                return
-            existing = scores.get(normalized_label, 0.0)
-            scores[normalized_label] = max(existing, coerced)
+            current = scores.get(normalized, 0.0)
+            scores[normalized] = max(current, coerced)
 
-        while stack:
-            current = stack.pop()
+        if isinstance(result, dict):
+            for key in ("AI-written", "Human-written", "ai", "human"):
+                if key in result:
+                    set_score(key, result.get(key))
 
-            if isinstance(current, list):
-                stack.extend(current)
-                if len(current) == 2 and isinstance(current[0], str):
-                    set_score(current[0], current[1])
-                continue
+            confidences = result.get("confidences")
+            if isinstance(confidences, list):
+                for item in confidences:
+                    if isinstance(item, dict):
+                        label = item.get("label")
+                        confidence = item.get("confidence")
+                        if isinstance(label, str):
+                            set_score(label, confidence)
+            elif isinstance(confidences, dict):
+                for label, confidence in confidences.items():
+                    if isinstance(label, str):
+                        set_score(label, confidence)
 
-            if not isinstance(current, dict):
-                continue
-
-            label = current.get("label")
-            if isinstance(label, str):
-                for score_key in ("score", "confidence", "probability"):
-                    if score_key in current:
-                        set_score(label, current.get(score_key))
-
-            labels = current.get("labels")
-            raw_scores = current.get("scores")
+            labels = result.get("labels")
+            raw_scores = result.get("scores")
             if isinstance(labels, list) and isinstance(raw_scores, list):
-                for raw_label, raw_score in zip(labels, raw_scores):
-                    if isinstance(raw_label, str):
-                        set_score(raw_label, raw_score)
-
-            if isinstance(raw_scores, dict):
-                for raw_label, raw_score in raw_scores.items():
-                    if isinstance(raw_label, str):
-                        set_score(raw_label, raw_score)
-
-            for key in ("ai", "human", "generated", "machine", "not_ai"):
-                if key in current:
-                    set_score(key, current.get(key))
-
-            for value in current.values():
-                if isinstance(value, (list, dict)):
-                    stack.append(value)
+                for label, score in zip(labels, raw_scores):
+                    if isinstance(label, str):
+                        set_score(label, score)
 
         return scores
 
-    @staticmethod
-    def _extract_predicted_label(payload: Any) -> str | None:
-        candidates: list[str] = []
-        stack: list[Any] = [payload]
+    def _extract_data_payload(self, payload: Any) -> list[Any]:
+        if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+            return payload["data"]
+        if isinstance(payload, list):
+            return payload
+        return [payload]
 
-        while stack:
-            current = stack.pop()
-            if isinstance(current, str):
-                normalized = DetectorService._normalize_label(current)
-                if normalized:
-                    candidates.append(normalized)
-                continue
+    def _resolve_space_probability(self, payload: Any) -> float | None:
+        data_payload = self._extract_data_payload(payload)
+        first_item = data_payload[0] if data_payload else payload
+        label_scores = self._extract_label_scores(first_item)
 
-            if isinstance(current, list):
-                stack.extend(current)
-                continue
+        ai_probability: float | None = None
+        human_probability: float | None = None
 
-            if not isinstance(current, dict):
-                continue
-
-            for key in ("predicted_label", "prediction", "result", "output_label", "label"):
-                value = current.get(key)
-                if isinstance(value, str):
-                    normalized = DetectorService._normalize_label(value)
-                    if normalized:
-                        candidates.append(normalized)
-
-            for value in current.values():
-                if isinstance(value, (list, dict, str)):
-                    stack.append(value)
-
-        for label in candidates:
+        for label, score in label_scores.items():
             if any(token in label for token in _NEGATIVE_AI_TOKENS):
-                return label
-            if any(token in label for token in _HUMAN_TOKENS):
-                return label
-            if any(token in label for token in _AI_TOKENS):
-                return label
-        return None
+                human_probability = max(human_probability or 0.0, score)
+            elif any(token in label for token in _HUMAN_TOKENS):
+                human_probability = max(human_probability or 0.0, score)
+            elif any(token in label for token in _AI_TOKENS):
+                ai_probability = max(ai_probability or 0.0, score)
 
-    @staticmethod
-    def _resolve_space_probability(payload: Any) -> float | None:
-        if isinstance(payload, dict):
-            for key in ("ai_probability", "probability", "score"):
-                direct = DetectorService._coerce_probability(payload.get(key))
-                if direct is not None:
-                    return direct
+        if ai_probability is not None:
+            return ai_probability
+        if human_probability is not None:
+            return float(clamp(1.0 - human_probability, 0.0, 1.0))
 
-        labels = DetectorService._collect_label_scores(payload)
-        if labels:
-            for label, score in labels.items():
-                if any(token in label for token in _NEGATIVE_AI_TOKENS):
-                    return float(clamp(1.0 - score, 0.0, 1.0))
+        predicted_label: str | None = None
+        if len(data_payload) > 1 and isinstance(data_payload[1], str):
+            predicted_label = self._normalize_label(data_payload[1])
+        elif isinstance(first_item, dict) and isinstance(first_item.get("label"), str):
+            predicted_label = self._normalize_label(first_item["label"])
 
-            for label, score in labels.items():
-                if any(token in label for token in _HUMAN_TOKENS):
-                    return float(clamp(1.0 - score, 0.0, 1.0))
-
-            for label, score in labels.items():
-                if any(token in label for token in _AI_TOKENS):
-                    return score
-
-            if "label_1" in labels:
-                return labels["label_1"]
-            if "class_1" in labels:
-                return labels["class_1"]
-            if "label_0" in labels and len(labels) == 2:
-                return float(clamp(1.0 - labels["label_0"], 0.0, 1.0))
-            if len(labels) == 1:
-                return next(iter(labels.values()))
-
-        predicted_label = DetectorService._extract_predicted_label(payload)
         if predicted_label is not None:
             if any(token in predicted_label for token in _NEGATIVE_AI_TOKENS):
                 return 0.0
@@ -227,32 +298,17 @@ class DetectorService:
         truncated = text[: max(200, self.settings.hf_space_max_input_chars)]
         request_payload = {"data": [truncated]}
 
-        try:
-            response = self.client.post(self.settings.hf_space_predict_url, json=request_payload)
-        except Exception:
-            logger.exception(
-                "detector_hf_space_inference_failed",
-                endpoint=self.settings.hf_space_predict_url,
-            )
-            return None
+        payload = self._call_space_endpoint(self.predict_url, request_payload)
+        if payload is None:
+            discovered = self._discover_queue_predict_url()
+            if discovered and discovered != self.predict_url:
+                fallback_payload = self._call_space_endpoint(discovered, request_payload)
+                if fallback_payload is not None:
+                    self.predict_url = discovered
+                    payload = fallback_payload
+                    logger.info("detector_hf_space_endpoint_switched", endpoint=discovered)
 
-        if response.status_code >= 400:
-            logger.warning(
-                "detector_hf_space_http_error",
-                endpoint=self.settings.hf_space_predict_url,
-                status_code=response.status_code,
-                preview=response.text[:180],
-            )
-            return None
-
-        try:
-            payload = response.json()
-        except ValueError:
-            logger.warning("detector_hf_space_unparseable_response", preview=response.text[:180])
-            return None
-
-        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
-            logger.warning("detector_hf_space_inference_error", preview=payload["error"][:180])
+        if payload is None:
             return None
 
         probability = self._resolve_space_probability(payload)
