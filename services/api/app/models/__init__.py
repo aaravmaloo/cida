@@ -1,7 +1,6 @@
 from app.models.entities import (
     AdminAuditLog,
     AnalysisEvent,
-    HumanizeEvent,
     ModelRegistry,
     ReportJob,
     UsageBucket,
@@ -9,7 +8,6 @@ from app.models.entities import (
 
 __all__ = [
     "AnalysisEvent",
-    "HumanizeEvent",
     "ReportJob",
     "UsageBucket",
     "AdminAuditLog",
