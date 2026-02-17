@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+import os
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
@@ -38,13 +39,14 @@ class Settings(BaseSettings):
     )
     cors_allow_origin_regex: str = Field(default="", alias="CORS_ALLOW_ORIGIN_REGEX")
 
-    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
-    groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
-    groq_temperature: float = Field(default=1.0, alias="GROQ_TEMPERATURE")
-    groq_top_p: float = Field(default=1.0, alias="GROQ_TOP_P")
-    groq_max_completion_tokens: int = Field(default=8192, alias="GROQ_MAX_COMPLETION_TOKENS")
-    groq_reasoning_effort: str = Field(default="medium", alias="GROQ_REASONING_EFFORT")
-    groq_max_input_chars: int = Field(default=12000, alias="GROQ_MAX_INPUT_CHARS")
+    hf_token: str = Field(default="", alias="HF_TOKEN")
+    hf_model: str = Field(default="desklib/ai-text-detector-v1.01", alias="HF_MODEL")
+    hf_inference_base_url: str = Field(
+        default="https://router.huggingface.co/hf-inference/models",
+        alias="HF_INFERENCE_BASE_URL",
+    )
+    hf_timeout_seconds: float = Field(default=20.0, alias="HF_TIMEOUT_SECONDS")
+    hf_max_input_chars: int = Field(default=12000, alias="HF_MAX_INPUT_CHARS")
 
     cache_ttl_seconds: int = Field(default=600, alias="CACHE_TTL_SECONDS")
     max_upload_bytes: int = Field(default=3_145_728, alias="MAX_UPLOAD_BYTES")
@@ -67,15 +69,25 @@ class Settings(BaseSettings):
             return _normalize_async_database_url(value)
         return value
 
-    @field_validator("groq_reasoning_effort", mode="before")
+    @field_validator("hf_token", mode="before")
     @classmethod
-    def normalize_reasoning_effort(cls, value: object) -> object:
+    def normalize_hf_token(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+        for env_name in ("HUGGINGFACEHUB_API_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_API_KEY"):
+            candidate = os.getenv(env_name, "").strip()
+            if candidate:
+                return candidate
+        return ""
+
+    @field_validator("hf_inference_base_url", mode="before")
+    @classmethod
+    def normalize_hf_inference_base_url(cls, value: object) -> object:
         if not isinstance(value, str):
-            return "medium"
-        normalized = value.strip().lower()
-        if normalized in {"low", "medium", "high"}:
-            return normalized
-        return "medium"
+            return "https://router.huggingface.co/hf-inference/models"
+        normalized = value.strip().rstrip("/")
+        return normalized or "https://router.huggingface.co/hf-inference/models"
 
     @staticmethod
     def _normalize_origin(origin: str) -> str:
