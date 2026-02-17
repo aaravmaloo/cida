@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
+from starlette.requests import ClientDisconnect
 
 from app import models  # noqa: F401
 from app.api.v1.router import router as v1_router
@@ -61,6 +62,15 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError):
     return ORJSONResponse(
         status_code=422,
         content=ErrorResponse(detail=str(exc), trace_id=get_trace_id()).model_dump(),
+    )
+
+
+@app.exception_handler(ClientDisconnect)
+async def client_disconnect_handler(_: Request, __: ClientDisconnect):
+    logger.info("client_disconnected", trace_id=get_trace_id())
+    return ORJSONResponse(
+        status_code=499,
+        content=ErrorResponse(detail="Client disconnected", trace_id=get_trace_id()).model_dump(),
     )
 
 
