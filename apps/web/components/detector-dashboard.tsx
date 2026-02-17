@@ -1,7 +1,6 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation } from "@tanstack/react-query";
 import { Pie, PieChart, Cell, ResponsiveContainer } from "recharts";
 import { ChangeEvent, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -29,6 +28,7 @@ export function DetectorDashboard() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string>("");
   const [reportStatus, setReportStatus] = useState<string>("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<FormData>({
@@ -40,25 +40,22 @@ export function DetectorDashboard() {
   const wordCount = useMemo(() => textValue.trim().split(/\s+/).filter(Boolean).length, [textValue]);
   const readTime = useMemo(() => (wordCount / 230).toFixed(1), [wordCount]);
 
-  const analyzeMutation = useMutation({
-    mutationFn: (payload: { text?: string; file?: File }) => {
-      if (payload.file) {
-        return analyzeFile(payload.file);
-      }
-      return analyzeText(payload.text || "");
-    },
-    onSuccess: (data) => {
-      setError("");
+  const runAnalysis = async (payload: { text?: string; file?: File }) => {
+    setIsAnalyzing(true);
+    setError("");
+    try {
+      const data = payload.file ? await analyzeFile(payload.file) : await analyzeText(payload.text || "");
       setResult(data);
       setReportStatus("");
-    },
-    onError: (err: Error) => {
-      setError(err.message);
-    },
-  });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Analysis failed");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const handleSubmit = form.handleSubmit(async (data) => {
-    await analyzeMutation.mutateAsync({ text: data.text });
+    await runAnalysis({ text: data.text });
   });
 
   const handleImportClick = () => fileInputRef.current?.click();
@@ -66,7 +63,8 @@ export function DetectorDashboard() {
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    await analyzeMutation.mutateAsync({ file });
+    await runAnalysis({ file });
+    event.target.value = "";
   };
 
   const handleDownloadReport = async () => {
@@ -147,9 +145,9 @@ export function DetectorDashboard() {
               <button
                 type="submit"
                 className="rounded-xl bg-cida-accent px-8 py-3 font-semibold text-white shadow-md hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={analyzeMutation.isPending}
+                disabled={isAnalyzing}
               >
-                {analyzeMutation.isPending ? "Scanning..." : "Scan Text"}
+                {isAnalyzing ? "Scanning..." : "Scan Text"}
               </button>
             </div>
           </form>
