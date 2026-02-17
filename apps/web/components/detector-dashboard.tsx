@@ -97,9 +97,10 @@ export function DetectorDashboard() {
 
   const aiProbability = result?.ai_probability ?? 0;
   const humanScore = result?.human_score ?? 0;
+  const predictedLabel = result?.predicted_label;
   const pieData = [
-    { name: "AI", value: Math.round(aiProbability * 100) },
-    { name: "Human", value: 100 - Math.round(aiProbability * 100) },
+    { name: "AI", value: aiProbability },
+    { name: "Human", value: humanScore },
   ];
   const breakdownItems = [
     { label: "Sentence Complexity", value: result?.complexity ?? null },
@@ -181,11 +182,11 @@ export function DetectorDashboard() {
             </div>
             <p className="-mt-28 text-center text-5xl font-bold">{result ? percent(aiProbability) : "--"}</p>
             <p className="mt-20 text-center text-sm font-semibold text-cida-accent">
-              {result ? (aiProbability >= 0.7 ? "Highly Likely AI" : aiProbability >= 0.45 ? "Mixed Signal" : "Likely Human") : "Awaiting Analysis"}
+              {result ? (predictedLabel === "AI" ? "AI-written" : "Human-written") : "Awaiting Analysis"}
             </p>
             <p className="mt-4 text-center text-sm text-cida-mute">
               {result
-                ? "Score combines calibrated transformer probability and linguistic pattern analysis."
+                ? "Score and label are returned directly by your Hugging Face Space."
                 : "Run a scan to see probability, readability, and linguistic metrics."}
             </p>
           </div>
