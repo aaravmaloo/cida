@@ -41,24 +41,6 @@ def upgrade() -> None:
     op.create_index("ix_analysis_events_text_hash", "analysis_events", ["text_hash"], unique=False)
 
     op.create_table(
-        "humanize_events",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("humanize_id", sa.String(length=64), nullable=False),
-        sa.Column("source_hash", sa.String(length=64), nullable=False),
-        sa.Column("style", sa.String(length=24), nullable=False),
-        sa.Column("strength", sa.Integer(), nullable=False),
-        sa.Column("input_word_count", sa.Integer(), nullable=False),
-        sa.Column("output_word_count", sa.Integer(), nullable=False),
-        sa.Column("readability_delta", sa.Float(), nullable=False),
-        sa.Column("latency_ms", sa.Float(), nullable=False),
-        sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_humanize_events_humanize_id", "humanize_events", ["humanize_id"], unique=True)
-    op.create_index("ix_humanize_events_source_hash", "humanize_events", ["source_hash"], unique=False)
-
-    op.create_table(
         "report_jobs",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("report_id", sa.String(length=64), nullable=False),
@@ -119,9 +101,6 @@ def downgrade() -> None:
     op.drop_index("ix_report_jobs_analysis_id", table_name="report_jobs")
     op.drop_index("ix_report_jobs_report_id", table_name="report_jobs")
     op.drop_table("report_jobs")
-    op.drop_index("ix_humanize_events_source_hash", table_name="humanize_events")
-    op.drop_index("ix_humanize_events_humanize_id", table_name="humanize_events")
-    op.drop_table("humanize_events")
     op.drop_index("ix_analysis_events_text_hash", table_name="analysis_events")
     op.drop_index("ix_analysis_events_analysis_id", table_name="analysis_events")
     op.drop_table("analysis_events")
