@@ -6,16 +6,16 @@ CIDA is an AI text platform with a core capability focused on:
 
 It also includes admin analytics, async report generation, rate limiting, and Turnstile verification.
 
-## Model Stack (Groq)
+## Model Stack (HF Space)
 
-CIDA now runs detector scoring through Groq-hosted LLM inference.
+CIDA now runs detector scoring through a Hugging Face Space endpoint.
 
 ### Detector
 
-- Model: `llama-3.1-8b-instant`
-- Provider: Groq
+- Model: `desklib/ai-text-detector-v1.01`
+- Provider: Hugging Face Space (`aaravmaloo/ai-content-detector`)
 - Task: AI-likelihood scoring (returns `ai_probability` in `[0, 1]`)
-- Runtime: API calls Groq chat completions; if unavailable, service falls back to local heuristic scoring.
+- Runtime: API calls Space `/run/predict`; if unavailable, service falls back to local heuristic scoring.
 
 ## What the System Does
 
@@ -29,7 +29,7 @@ CIDA now runs detector scoring through Groq-hosted LLM inference.
 4. Report jobs are queued in Redis.
 5. `services/worker` renders and stores JSON/PDF reports.
 
-If Groq is unavailable or response parsing fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
+If Space inference is unavailable or response parsing fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
 
 ## Repository Layout
 
@@ -62,13 +62,11 @@ Required:
 
 Model/runtime:
 
-- `GROQ_API_KEY`
-- `GROQ_MODEL` (default `llama-3.1-8b-instant`)
-- `GROQ_TEMPERATURE` (default `1`)
-- `GROQ_TOP_P` (default `1`)
-- `GROQ_MAX_COMPLETION_TOKENS` (default `8192`)
-- `GROQ_REASONING_EFFORT` (default `medium`)
-- `GROQ_MAX_INPUT_CHARS` (default `12000`)
+- `HF_SPACE_PREDICT_URL` (default `https://aaravmaloo.ai-content-detector.hf.space/run/predict`)
+- `HF_SPACE_API_TOKEN` (optional)
+- `HF_SPACE_TIMEOUT_SECONDS` (default `20`)
+- `HF_SPACE_MAX_INPUT_CHARS` (default `12000`)
+- `HF_SPACE_MODEL_VERSION` (default `desklib/ai-text-detector-v1.01`)
 
 Optional:
 
@@ -151,8 +149,8 @@ npm run dev:web
 ## Deployment Notes
 
 - API Docker image no longer expects ONNX artifacts.
-- Detector scoring is done via Groq API calls.
-- Configure `GROQ_API_KEY` in deployment secrets.
+- Detector scoring is done via HF Space API calls.
+- If your Space is private, configure `HF_SPACE_API_TOKEN` in deployment secrets.
 
 ## Health Checks
 
@@ -163,8 +161,8 @@ curl -i https://<api-domain>/readyz
 
 ## Credits
 
-- Detector inference provider: **Groq**
-- Detector model: **Meta `llama-3.1-8b-instant`**
+- Detector inference provider: **Hugging Face Space**
+- Detector model: **Desklib `desklib/ai-text-detector-v1.01`**
 
 ## Security and Responsible Use
 
