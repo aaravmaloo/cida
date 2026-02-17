@@ -6,16 +6,16 @@ CIDA is an AI text platform with a core capability focused on:
 
 It also includes admin analytics, async report generation, rate limiting, and Turnstile verification.
 
-## Model Stack (Groq)
+## Model Stack (Hugging Face)
 
-CIDA now runs detector scoring through Groq-hosted LLM inference.
+CIDA now runs detector scoring through Hugging Face Inference.
 
 ### Detector
 
-- Model: `openai/gpt-oss-120b`
-- Provider: Groq
+- Model: `desklib/ai-text-detector-v1.01`
+- Provider: Hugging Face Inference
 - Task: AI-likelihood scoring (returns `ai_probability` in `[0, 1]`)
-- Runtime: API calls Groq chat completions; if unavailable, service falls back to local heuristic scoring.
+- Runtime: API calls Hugging Face inference; if unavailable, service falls back to local heuristic scoring.
 
 ## What the System Does
 
@@ -29,7 +29,7 @@ CIDA now runs detector scoring through Groq-hosted LLM inference.
 4. Report jobs are queued in Redis.
 5. `services/worker` renders and stores JSON/PDF reports.
 
-If Groq is unavailable or response parsing fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
+If Hugging Face inference is unavailable or response parsing fails, API uses deterministic fallback logic (heuristic detector) so the service still responds.
 
 ## Repository Layout
 
@@ -62,13 +62,11 @@ Required:
 
 Model/runtime:
 
-- `GROQ_API_KEY`
-- `GROQ_MODEL` (default `openai/gpt-oss-120b`)
-- `GROQ_TEMPERATURE` (default `1`)
-- `GROQ_TOP_P` (default `1`)
-- `GROQ_MAX_COMPLETION_TOKENS` (default `8192`)
-- `GROQ_REASONING_EFFORT` (default `medium`)
-- `GROQ_MAX_INPUT_CHARS` (default `12000`)
+- `HF_TOKEN`
+- `HF_MODEL` (default `desklib/ai-text-detector-v1.01`)
+- `HF_INFERENCE_BASE_URL` (default `https://router.huggingface.co/hf-inference/models`)
+- `HF_TIMEOUT_SECONDS` (default `20`)
+- `HF_MAX_INPUT_CHARS` (default `12000`)
 
 Optional:
 
@@ -151,8 +149,8 @@ npm run dev:web
 ## Deployment Notes
 
 - API Docker image no longer expects ONNX artifacts.
-- Detector scoring is done via Groq API calls.
-- Configure `GROQ_API_KEY` in deployment secrets.
+- Detector scoring is done via Hugging Face Inference API calls.
+- Configure `HF_TOKEN` in deployment secrets.
 
 ## Health Checks
 
@@ -163,8 +161,8 @@ curl -i https://<api-domain>/readyz
 
 ## Credits
 
-- Detector inference provider: **Groq**
-- Detector model: **OpenAI `openai/gpt-oss-120b`**
+- Detector inference provider: **Hugging Face Inference**
+- Detector model: **Desklib `desklib/ai-text-detector-v1.01`**
 
 ## Security and Responsible Use
 
