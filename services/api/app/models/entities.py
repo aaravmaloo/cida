@@ -28,22 +28,6 @@ class AnalysisEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class HumanizeEvent(Base):
-    __tablename__ = "humanize_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    humanize_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    source_hash: Mapped[str] = mapped_column(String(64), index=True)
-    style: Mapped[str] = mapped_column(String(24))
-    strength: Mapped[int] = mapped_column(Integer)
-    input_word_count: Mapped[int] = mapped_column(Integer)
-    output_word_count: Mapped[int] = mapped_column(Integer)
-    readability_delta: Mapped[float] = mapped_column(Float)
-    latency_ms: Mapped[float] = mapped_column(Float)
-    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
 class ReportJob(Base):
     __tablename__ = "report_jobs"
 
